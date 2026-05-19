@@ -5,18 +5,19 @@ import pandas as pd
 import time
 import random
 import os
-import base64
 from datetime import datetime
 import re
 
-st.set_page_config(page_title="Satta Data Final", layout="wide")
+st.set_page_config(page_title="Satta Master Fix", layout="wide")
 
 DB_FILE = "satta_master_db.csv"
 
-# --- Functions ---
+# --- Database Logic ---
 def load_db():
     if os.path.exists(DB_FILE):
-        try: return pd.read_csv(DB_FILE)
+        try:
+            df = pd.read_csv(DB_FILE)
+            if not df.empty: return df
         except: return pd.DataFrame()
     return pd.DataFrame()
 
@@ -36,7 +37,7 @@ def fetch_month(dt):
     scraper = cloudscraper.create_scraper()
     url = f"https://satta-king-fast.com/chart.php?month={m}&year={y}"
     try:
-        res = scraper.get(url, timeout=25)
+        res = scraper.get(url, timeout=20)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
             table = soup.find('table')
@@ -57,62 +58,69 @@ def fetch_month(dt):
     except: return None
     return None
 
-# --- UI ---
-st.title("🛡️ Satta Master - Auto Download Fix")
+# --- UI Layout ---
+st.title("🗄️ Satta Database (Final Stable Version)")
 
-# Sidebar stats
-db_preview = load_db()
-if not db_preview.empty:
-    st.sidebar.success(f"Database: {len(db_preview)} Rows")
+# Pehle check karo data hai ya nahi
+master_df = load_db()
 
-col1, col2 = st.columns(2)
-with col1: start_date = st.date_input("Start Date", datetime(2018, 1, 1))
-with col2: end_date = st.date_input("End Date", datetime.now())
+# Input Section
+c1, c2 = st.columns(2)
+with c1: start_date = st.date_input("Start Date", datetime(2018, 1, 1))
+with c2: end_date = st.date_input("End Date", datetime.now())
 
-if st.button("🚀 Start Sync & Auto-Download"):
+if st.button("🚀 SYNC DATA NOW"):
     months = pd.date_range(start=start_date, end=end_date, freq='MS')
     pb = st.progress(0)
-    msg = st.empty()
+    st_msg = st.empty()
     
     for i, dt in enumerate(months):
         m_id = dt.strftime("%m-%Y")
-        msg.info(f"Syncing: {m_id}...")
+        st_msg.info(f"Downloading: {m_id}...")
         data = fetch_month(dt)
         if data:
             save_to_db(data)
         pb.progress((i + 1) / len(months))
         time.sleep(random.uniform(1, 2))
     
-    # 1. Kaam khatam, data load karo
-    final_data = load_db()
-    if not final_data.empty:
-        # Pivot & Sort
-        pivot_df = final_data.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
+    st.balloons()
+    st.success("✅ Sync Complete! Refreshing results...")
+    time.sleep(2)
+    st.rerun()
+
+st.divider()
+
+# --- DOWNLOAD SECTION (Always Visible if Data Exists) ---
+if not master_df.empty:
+    st.subheader("📥 Data Download & Preview")
+    
+    try:
+        # Pivot logic for Excel
+        pivot_df = master_df.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
+        # Sort date properly
         pivot_df['dt_obj'] = pd.to_datetime(pivot_df['DATE'], format='%d-%m-%Y', dayfirst=True, errors='coerce')
         pivot_df = pivot_df.sort_values('dt_obj', ascending=False).drop('dt_obj', axis=1)
         
-        csv_bytes = pivot_df.to_csv(index=False, encoding='utf-8-sig')
+        csv_bytes = pivot_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
         
-        # 2. AUTO-DOWNLOAD MAGIC (JavaScript use karke seedha file mobile mein download ho jayegi)
-        b64 = base64.b64encode(csv_bytes.encode('utf-8-sig')).decode()
-        file_name = f"Satta_Data_{datetime.now().strftime('%H%M%S')}.csv"
-        href = f'<a id="download_link" href="data:file/csv;base64,{b64}" download="{file_name}"></a>'
-        st.markdown(href, unsafe_allow_html=True)
+        # Big Download Button
+        st.download_button(
+            label="🟢 DOWNLOAD EXCEL (CSV) FILE",
+            data=csv_bytes,
+            file_name=f"Satta_Data_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
         
-        # JS click trigger
-        st.markdown("""
-            <script>
-                document.getElementById('download_link').click();
-            </script>
-        """, unsafe_allow_html=True)
+        st.write(f"Database mein total {len(master_df)} entries hain.")
+        st.dataframe(pivot_df.head(100))
         
-        st.balloons()
-        st.success("✅ PROCESS COMPLETE! File download ho chuki hai.")
-        st.dataframe(pivot_df.head(50))
-    else:
-        st.error("No data found to download.")
+    except Exception as e:
+        st.error(f"Display Error: {e}")
+else:
+    st.info("Database khali hai. Upar diye gaye 'Sync' button par click karein.")
 
-if st.sidebar.button("🗑️ Reset DB"):
+if st.sidebar.button("🗑️ Reset All Data"):
     if os.path.exists(DB_FILE): os.remove(DB_FILE)
     st.rerun()
     
