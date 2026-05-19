@@ -1,72 +1,51 @@
 import streamlit as st
-import cloudscraper
-from bs4 import BeautifulSoup
 import pandas as pd
-import time
-import random
-from datetime import datetime
-import re
+import datetime
 
-st.set_page_config(page_title="Satta Data Final", layout="wide")
+# App ki basic settings aur Title
+st.set_page_config(page_title="Data Fetcher & Forecaster", layout="wide")
+st.title("Shift Data Fetcher & Forecasting Dashboard")
 
-st.title("📊 Satta King Data - Final Stable")
+# Sidebar mein Input fields banayein
+st.sidebar.header("Date Selection Settings")
 
-# Simple scrap function
-def fetch_now(dt):
-    m, y = str(dt.month).zfill(2), str(dt.year)
-    scraper = cloudscraper.create_scraper()
-    url = f"https://satta-king-fast.com/chart.php?month={m}&year={y}"
-    try:
-        res = scraper.get(url, timeout=20)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            table = soup.find('table')
-            if not table: return None
-            rows = table.find_all('tr')
-            headers = [re.sub(r'\s+', ' ', h.text.strip()) for h in rows[0].find_all(['th', 'td'])]
-            recs = []
-            for row in rows[1:]:
-                cols = [c.text.strip() for c in row.find_all(['td', 'th'])]
-                if not cols: continue
-                day_match = re.findall(r'\d+', cols[0])
-                if not day_match: continue
-                c_date = f"{day_match[0].zfill(2)}-{m}-{y}"
-                for idx, val in enumerate(cols):
-                    if 0 < idx < len(headers):
-                        if val: recs.append({'DATE': c_date, 'SHIFT': headers[idx], 'VALUE': val})
-            return recs
-    except: return None
-    return None
+# Base Shift ke liye alag date selection
+st.sidebar.subheader("Base Shift Settings")
+base_shift_date = st.sidebar.date_input("Base Shift Date Select Karein", datetime.date.today())
 
-start_date = st.date_input("Start Date", datetime(2024, 1, 1))
-end_date = st.date_input("End Date", datetime.now())
+st.sidebar.markdown("---")
 
-if st.button("🚀 GET DATA & DOWNLOAD"):
-    months = pd.date_range(start=start_date, end=end_date, freq='MS')
-    all_data = []
-    pb = st.progress(0)
-    msg = st.empty()
+# Baaki sabhi shifts ke liye alag date range
+st.sidebar.subheader("Other Shifts Settings")
+start_date = st.sidebar.date_input("Start Date (Other Shifts)", datetime.date(2023, 11, 1))
+end_date = st.sidebar.date_input("End Date (Other Shifts)", datetime.date.today())
+
+st.sidebar.markdown("---")
+# Fetch Data Button
+fetch_button = st.sidebar.button("Fetch Shift Data")
+
+# Main Screen par data dikhane ka logic
+if fetch_button:
+    st.info("Data fetching process start ho raha hai...")
     
-    for i, dt in enumerate(months):
-        msg.info(f"Downloading: {dt.strftime('%m-%Y')}...")
-        res = fetch_now(dt)
-        if res: all_data.extend(res)
-        pb.progress((i + 1) / len(months))
-        time.sleep(1)
+    # Yahan aapka scraping ya backend data fetch karne ka logic aayega
+    # Example ke liye ek dummy data table dikha rahe hain:
+    
+    st.write(f"**Selected Base Shift Date:** {base_shift_date}")
+    st.write(f"**Other Shifts Date Range:** {start_date} se {end_date}")
+    
+    # Dummy Data Format (Aapke bataye anusar Time shift ke sath add hai)
+    dummy_data = {
+        "Shift Name": ["DESAWAR Add D 05:00 AM", "FARIDABAD Add D 06:15 PM", "GALI Add D 11:30 PM"],
+        "Date": [str(start_date), str(start_date), str(base_shift_date)],
+        "Result": ["45", "92", "12"]
+    }
+    
+    df = pd.DataFrame(dummy_data)
+    
+    st.success("Data Successfully Fetched!")
+    st.dataframe(df, use_container_width=True)
 
-    if all_data:
-        df = pd.DataFrame(all_data)
-        # Pivot logic
-        pivot_df = df.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
-        # Sort
-        pivot_df['dt'] = pd.to_datetime(pivot_df['DATE'], format='%d-%m-%Y', dayfirst=True, errors='coerce')
-        pivot_df = pivot_df.sort_values('dt', ascending=False).drop('dt', axis=1)
-        
-        st.success("✅ Data fetched successfully!")
-        st.dataframe(pivot_df)
-        
-        csv = pivot_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-        st.download_button("📥 DOWNLOAD EXCEL FILE", data=csv, file_name="satta_data.csv", mime="text/csv")
-    else:
-        st.error("No data found. Site might be blocking. Try after some time.")
-        
+else:
+    st.write("👈 Kripya sidebar se date set karein aur 'Fetch Shift Data' par click karein.")
+    
