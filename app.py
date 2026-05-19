@@ -4,141 +4,128 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import random
+import os
 from datetime import datetime
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-st.set_page_config(page_title="Satta Data - Pro Fix", layout="wide")
+st.set_page_config(page_title="Satta Master Database", layout="wide")
 
-st.title("⚡ Satta Extractor (Fixed Multi-Thread)")
+# Permanent File Name
+DB_FILE = "satta_master_database.csv"
 
-# 1. Session State Initialization
-if 'master_data' not in st.session_state:
-    st.session_state.master_data = []
-if 'processed_months' not in st.session_state:
-    st.session_state.processed_months = set() # Set for faster lookup
-if 'unique_shifts' not in st.session_state:
-    st.session_state.unique_shifts = set()
+st.title("🗄️ Satta Master Database (Auto-Update Mode)")
+st.info("Ye app purana data save rakhta hai. Agle din sirf naya data add hoga.")
 
-SITES = [
-    "https://satta-king-fast.com/chart.php",
-    "https://sattaking-fast.com/chart.php",
-    "https://satta-fast.com/chart.php"
-]
+# --- Functions to Manage Permanent Storage ---
+def load_existing_db():
+    if os.path.exists(DB_FILE):
+        return pd.read_csv(DB_FILE)
+    return pd.DataFrame()
 
-# UI Inputs
-col1, col2 = st.columns(2)
-with col1:
-    start_date = st.date_input("Start Date", datetime(2018, 1, 1))
-with col2:
-    end_date = st.date_input("End Date", datetime.now())
+def save_to_db(new_df):
+    if os.path.exists(DB_FILE):
+        old_df = pd.read_csv(DB_FILE)
+        # Purane aur naye data ko jodna aur duplicates hatana
+        combined_df = pd.concat([old_df, new_df], ignore_index=True).drop_duplicates(subset=['DATE', 'SHIFT'], keep='last')
+        combined_df.to_csv(DB_FILE, index=False)
+    else:
+        new_df.to_csv(DB_FILE, index=False)
 
-# --- FIXED FUNCTION (Removed Session State access inside thread) ---
-def scrape_single_month(dt):
-    m = str(dt.month).zfill(2)
-    y = str(dt.year)
-    month_id = f"{m}-{y}"
-    
+# --- Scraper Setup ---
+SITES = ["https://satta-king-fast.com/chart.php", "https://sattaking-fast.com/chart.php"]
+
+def fetch_month(dt):
+    m, y = str(dt.month).zfill(2), str(dt.year)
     scraper = cloudscraper.create_scraper()
-    site_url = random.choice(SITES)
-    target_url = f"{site_url}?month={m}&year={y}"
-    
     try:
-        res = scraper.get(target_url, timeout=15)
+        res = scraper.get(f"{random.choice(SITES)}?month={m}&year={y}", timeout=15)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
             table = soup.find('table')
             if table:
                 rows = table.find_all('tr')
-                if len(rows) > 1:
-                    header_cells = rows[0].find_all(['th', 'td'])
-                    headers = [re.sub(r'\s+', ' ', h.text.strip()) for h in header_cells]
-                    
-                    month_records = []
-                    for row in rows[1:]:
-                        cols = row.find_all(['td', 'th'])
-                        if len(cols) < 2: continue
-                        
-                        day_match = re.findall(r'\d+', cols[0].text.strip())
-                        if not day_match: continue
-                        
-                        clean_date = f"{day_match[0].zfill(2)}-{m}-{y}"
-                        
-                        for idx, col in enumerate(cols):
-                            if idx == 0 or idx >= len(headers): continue
-                            shift = headers[idx]
-                            if shift and 'DATE' not in shift.upper():
-                                month_records.append({
-                                    'DATE': clean_date,
-                                    'SHIFT': shift,
-                                    'VALUE': col.text.strip()
-                                })
-                    return month_records, headers[1:], month_id
-    except Exception:
-        return "error"
+                headers = [re.sub(r'\s+', ' ', h.text.strip()) for h in rows[0].find_all(['th', 'td'])]
+                records = []
+                for row in rows[1:]:
+                    cols = row.find_all(['td', 'th'])
+                    day = re.findall(r'\d+', cols[0].text.strip())
+                    if not day: continue
+                    clean_date = f"{day[0].zfill(2)}-{m}-{y}"
+                    for idx, col in enumerate(cols):
+                        if 0 < idx < len(headers):
+                            val = col.text.strip()
+                            if val: # Sirf wo data lein jo khali nahi hai
+                                records.append({'DATE': clean_date, 'SHIFT': headers[idx], 'VALUE': val})
+                return records
+    except: return None
     return None
 
-# Controls
-c1, c2, c3 = st.columns(3)
-with c1:
-    start_btn = st.button("🚀 Start/Resume Fetching")
-with c2:
-    if st.button("🛑 Reset Everything"):
-        st.session_state.master_data = []
-        st.session_state.processed_months = set()
-        st.session_state.unique_shifts = set()
-        st.rerun()
+# --- Main UI ---
+existing_data = load_existing_db()
 
-if start_btn:
+# Statistics dikhana
+if not existing_data.empty:
+    st.success(f"Database mein pehle se {existing_data['DATE'].nunique()} dino ka data saved hai.")
+else:
+    st.warning("Database khali hai. Pehli baar download karne mein samay lagega.")
+
+col1, col2 = st.columns(2)
+with col1:
+    start_date = st.date_input("Kahan se shuru karein", datetime(2018, 1, 1))
+with col2:
+    end_date = st.date_input("Kab tak ka update chahiye", datetime.now())
+
+if st.button("🚀 Sync / Update Data"):
     date_range = pd.date_range(start=start_date, end=end_date, freq='MS')
     
-    # FILTERING: Thread ke bahar hi filter kar lo taaki thread ko session_state na dekhna pade
-    remaining_months = [dt for dt in date_range if f"{str(dt.month).zfill(2)}-{dt.year}" not in st.session_state.processed_months]
+    # Check karein kaunse mahine ka data missing ho sakta hai (Latest month hamesha fetch karein update ke liye)
+    progress_bar = st.progress(0)
+    status = st.empty()
     
-    if not remaining_months:
-        st.success("Saara data tayyar hai!")
-    else:
-        st.info(f"Bacha hua data nikal raha hoon... ({len(remaining_months)} mahine)")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+    total_new_records = []
+    
+    for i, dt in enumerate(date_range):
+        m_id = dt.strftime("%m-%Y")
+        status.text(f"Checking data for: {m_id}")
         
-        # Max workers ko 3 rakha hai taaki block na ho
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            future_to_month = {executor.submit(scrape_single_month, dt): dt for dt in remaining_months}
-            
-            for i, future in enumerate(as_completed(future_to_month)):
-                dt = future_to_month[future]
-                m_id = f"{str(dt.month).zfill(2)}-{dt.year}"
-                
-                try:
-                    result = future.result()
-                    if result == "error":
-                        status_text.warning(f"Failed: {m_id}. Next time try karenge.")
-                    elif result:
-                        month_data, month_shifts, res_id = result
-                        st.session_state.master_data.extend(month_data)
-                        st.session_state.processed_months.add(res_id)
-                        st.session_state.unique_shifts.update(month_shifts)
-                        status_text.text(f"Done: {res_id}")
-                except Exception as e:
-                    status_text.error(f"Thread Error: {str(e)}")
-                
-                progress_bar.progress((i + 1) / len(remaining_months))
-                time.sleep(random.uniform(1, 2))
+        # Mahine ka data fetch karna
+        month_data = fetch_month(dt)
+        if month_data:
+            total_new_records.extend(month_data)
+            status.success(f"Fetched: {m_id}")
+        
+        progress_bar.progress((i + 1) / len(date_range))
+        time.sleep(random.uniform(1, 2))
+    
+    if total_new_records:
+        new_df = pd.DataFrame(total_new_records)
+        save_to_db(new_df)
+        st.rerun() # Page refresh karke naya data dikhayein
 
-# Result Display
-if st.session_state.master_data:
-    df_raw = pd.DataFrame(st.session_state.master_data)
-    # Pivot for exact Excel format
-    df_pivot = df_raw.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
+# --- Display & Download ---
+final_df = load_existing_db()
+if not final_df.empty:
+    # Pivot for Excel Format
+    pivot_df = final_df.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
     
-    # Simple Column Sorting
-    shifts_cols = [c for c in df_pivot.columns if c != 'DATE']
-    # Final Columns: DATE + Sorted Shifts
-    df_pivot = df_pivot[['DATE'] + sorted(shifts_cols)]
+    # Date Sorting
+    pivot_df['temp_dt'] = pd.to_datetime(pivot_df['DATE'], format='%d-%m-%Y', dayfirst=True)
+    pivot_df = pivot_df.sort_values('temp_dt', ascending=False).drop('temp_dt', axis=1)
     
-    st.dataframe(df_pivot)
+    st.subheader("Final Excel Sheet View")
+    st.dataframe(pivot_df)
     
-    csv = df_pivot.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-    st.download_button("📥 Download Full CSV", data=csv, file_name="satta_full_data.csv")
-    
+    # Download Button
+    csv = pivot_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+    st.download_button(
+        label="📥 Download Updated Excel (CSV)",
+        data=csv,
+        file_name=f"Satta_Master_{datetime.now().strftime('%Y-%m-%d')}.csv",
+        mime="text/csv"
+    )
+
+if st.sidebar.button("🗑️ Reset Database"):
+    if os.path.exists(DB_FILE):
+        os.remove(DB_FILE)
+        st.rerun()
+        
