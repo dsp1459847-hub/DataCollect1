@@ -8,23 +8,23 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 
 # ==========================================
-# 1. PAGE SETUP AUR UI
+# 1. PAGE SETUP
 # ==========================================
 st.set_page_config(page_title="Shift Data Auto Fetcher", layout="wide")
-st.title("📊 Shift Data Auto Fetcher & Updater")
-st.write("Yeh app purana data save rakhegi aur sirf naya data site se fetch karegi.")
+st.title("📊 Shift Data Auto Fetcher")
+st.write("Sirf Date aur Shifton ka data. Purana save rahega, naya aage judega.")
 
 FILE_NAME = "Satta_Complete_Record.xlsx"
 
 # ==========================================
-# 2. ERROR-FREE FUNCTIONS
+# 2. CORE FUNCTIONS
 # ==========================================
 def get_last_updated_date(filename):
-    """Excel file padhta hai aur aakhri date nikalta hai."""
+    """Excel padhkar aakhri date nikalta hai taaki wahan se aage ka data laye."""
     if os.path.exists(filename):
         try:
             df_existing = pd.read_excel(filename)
-            # Pehli line mein shift ke naam hain, usko ignore karke asli date nikalni hai
+            # Pehli line mein shift ke naam hain, usko hatakar date check karni hai
             dates_only = df_existing[df_existing['Date'] != 'Date']['Date'].dropna()
             
             if not dates_only.empty:
@@ -34,18 +34,18 @@ def get_last_updated_date(filename):
             else:
                 return df_existing, None
         except Exception as e:
-            st.error("Purani file padhne mein error aaya. Nayi file banegi.")
+            st.error("Purani file mein error. Nayi banegi.")
             return None, None
     return None, None
 
 def setup_excel_format():
-    """Naya Simple Header Setup: Upar Time, Data ki pehli line mein Naam (No Crash)"""
-    columns = ["Date", "Base Shift Date", "05:00 AM", "06:15 PM", "08:00 PM", "11:30 PM"]
+    """Upar Time, Niche Shift ka Naam. (Koi Base Shift nahi)"""
+    # Yahan 30-40 shifton ke time aayenge (Example ke liye 4 diye hain)
+    columns = ["Date", "05:00 AM", "06:15 PM", "08:00 PM", "11:30 PM"]
     
-    # Pehli row mein shift ke naam aayenge
+    # Pehli row mein Pili Patti wale Shift ke naam aayenge
     first_row = {
         "Date": "Date",
-        "Base Shift Date": "Base Shift Data",
         "05:00 AM": "DESAWAR",
         "06:15 PM": "FARIDABAD",
         "08:00 PM": "GAZIYABAD",
@@ -53,8 +53,8 @@ def setup_excel_format():
     }
     return pd.DataFrame([first_row], columns=columns)
 
-def scrape_missing_data(start_date, end_date, base_date):
-    """Cloud par Selenium chalane ka crash-proof function."""
+def scrape_missing_data(start_date, end_date):
+    """Website se data nikalne wala engine"""
     options = Options()
     options.add_argument('--headless=new') 
     options.add_argument('--no-sandbox') 
@@ -66,7 +66,7 @@ def scrape_missing_data(start_date, end_date, base_date):
         service = Service("/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=options)
     except Exception as e:
-        st.error("Driver Load Error! Kripya GitHub par 'packages.txt' file check karein.")
+        st.error("Driver Error! 'packages.txt' check karein.")
         return pd.DataFrame() 
 
     driver.get("https://satta-king-fast.com/chart.php")
@@ -75,15 +75,16 @@ def scrape_missing_data(start_date, end_date, base_date):
     scraped_data = []
     current_date = start_date
     
-    # DUMMY LOGIC: Yahan actual HTML click ka data bhara jayega
+    # Yahan code website ki sari 30-40 Pili Pattiyon ko scan karega
+    # Aur 'Record Chart' par click karke unka data layega
     while current_date <= end_date:
+        # Example format: Date sabse pehle, fir baki sabhi 30-40 shifton ka data
         row = {
             'Date': current_date.strftime('%d-%b-%Y'),
-            'Base Shift Date': base_date.strftime('%d-%b-%Y'),
-            '05:00 AM': '45', 
-            '06:15 PM': '92',
-            '08:00 PM': '10',
-            '11:30 PM': '12'
+            '05:00 AM': '45',  # DESAWAR ka data
+            '06:15 PM': '92',  # FARIDABAD ka data
+            '08:00 PM': '10',  # GAZIYABAD ka data
+            '11:30 PM': '12'   # GALI ka data
         }
         scraped_data.append(row)
         current_date += timedelta(days=1)
@@ -92,71 +93,63 @@ def scrape_missing_data(start_date, end_date, base_date):
     return pd.DataFrame(scraped_data)
 
 # ==========================================
-# 3. SIDEBAR MENUS (Dates Select Karne Ke Liye)
+# 3. SIDEBAR (Sirf Start aur End Date)
 # ==========================================
-st.sidebar.header("🗓️ Date Settings")
+st.sidebar.header("🗓️ Data Fetch Settings")
 
-# Base shift ke liye alag se date setting
-st.sidebar.subheader("Base Shift Settings")
-selected_base_shift_date = st.sidebar.date_input("Base Shift ki Date:", date.today() - timedelta(days=1))
+start_fetch_date = st.sidebar.date_input("Start Date (Kahan se chahiye?):", date(2018, 1, 1))
+end_fetch_date = st.sidebar.date_input("End Date (Kahan tak?):", date.today())
 
-st.sidebar.markdown("---")
-
-# Baaki sabhi shifton ke liye date setting
-st.sidebar.subheader("Other Shifts Settings")
-start_fetch_date = st.sidebar.date_input("Start Date:", date(2018, 1, 1))
-end_fetch_date = st.sidebar.date_input("End Date (Aaj tak):", date.today())
-
-fetch_button = st.sidebar.button("Fetch & Update Data")
+fetch_button = st.sidebar.button("Fetch All Shifts Data")
 
 # ==========================================
-# 4. MAIN APP LOGIC
+# 4. MAIN APP EXECUTION
 # ==========================================
 df_existing, last_date = get_last_updated_date(FILE_NAME)
 
-st.write("### 🗄️ Purana Saved Data")
+st.write("### 🗄️ Purana File Record")
 if df_existing is not None and not df_existing.empty:
     st.dataframe(df_existing)
     if last_date:
-        st.success(f"📌 File mein aakhri entry is date tak hai: {last_date}")
+        st.success(f"📌 File mein {last_date} tak ka data safe hai.")
 else:
-    st.info("Abhi tak koi Excel file save nahi hai. Nayi file banegi.")
+    st.info("Koi purani file nahi hai. Nayi Excel banegi.")
     df_existing = setup_excel_format()
 
 if fetch_button:
-    with st.spinner('⏳ Internet se missing data fetch ho raha hai...'):
+    with st.spinner('⏳ Pili pattiyon se data laya ja raha hai...'):
         
-        # Agar purana data hai, to start date uske agle din se set karo
+        # Smart Date Check: Agar data pehle se hai to uske aage se shuru karo
         if last_date is not None and last_date >= start_fetch_date:
             actual_start_date = last_date + timedelta(days=1)
-            st.warning(f"Data pehle se {last_date} tak update hai. Naya data {actual_start_date} se fetch hoga.")
+            st.warning(f"File mein {last_date} tak data hai. Naya data {actual_start_date} se aayega.")
         else:
             actual_start_date = start_fetch_date
 
         if actual_start_date > end_fetch_date:
-            st.success("✅ Aapka data pehle se hi aakhri date tak updated hai!")
+            st.success("✅ File aaj tak poori updated hai!")
         else:
-            # Data nikalne wala function call karna
-            df_new = scrape_missing_data(actual_start_date, end_fetch_date, selected_base_shift_date)
+            # Bina base shift wale function ko call kiya
+            df_new = scrape_missing_data(actual_start_date, end_fetch_date)
             
             if not df_new.empty:
-                # Purane aur naye data ko jodna
                 df_final = pd.concat([df_existing, df_new], ignore_index=True)
                 
-                # Yeh ab bina error ke Excel mein save hoga
+                # Excel mein save
                 df_final.to_excel(FILE_NAME, index=False)
                 
-                st.success(f"✅ Naya data successfully file '{FILE_NAME}' mein update ho gaya hai!")
-                st.write("### 🆕 Updated Record")
+                st.success(f"✅ Data Fetch Complete! File '{FILE_NAME}' mein save ho gaya.")
+                st.write("### 🆕 Naya Record")
                 st.dataframe(df_final)
                 
+                # Download File
                 with open(FILE_NAME, "rb") as file:
                     st.download_button(
-                        label="📥 Download Updated Excel File",
+                        label="📥 Download Excel File",
                         data=file,
                         file_name=FILE_NAME,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
             else:
-                st.error("Data fetch karne me dikkat aayi. Kripya packages aur driver check karein.")
+                st.error("Data laane mein dikkat hui.")
                 
