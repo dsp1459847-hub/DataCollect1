@@ -18,7 +18,7 @@ st.write("Yeh app Pili/Safed pattiyon se sirf Start aur End date ke hisab se dat
 FILE_NAME = "Fresh_Satta_Record.xlsx"
 
 # ==========================================
-# 2. CORE LIVE SCRAPING ENGINE (No Base Shift)
+# 2. CORE LIVE SCRAPING ENGINE (Crash-Proof)
 # ==========================================
 def fetch_live_data(start_date, end_date):
     """Asli data fetch karne wala engine jo Record Chart par click karega"""
@@ -73,16 +73,21 @@ def fetch_live_data(start_date, end_date):
         except:
             continue
 
-    # Excel ka Structure Taiyar Karna
-    # Row 1: Time, Row 2: Naam
+    # ---------------------------------------------------------
+    # YAHAN ERROR THEEK KIYA GAYA HAI (Duplicate Column Fix)
+    # ---------------------------------------------------------
     columns_time = ["Date"]
     row_names = {"Date": "Date"}
     
     for strip in strips_info:
-        columns_time.append(strip['time'])
-        row_names[strip['time']] = strip['name']
+        # Time ke sath Naam jod diya taki koi 2 column same na ho jayein
+        unique_col_name = f"{strip['time']} ({strip['name']})"
+        strip['unique_col'] = unique_col_name # Isko aage data bharne ke liye save rakha
         
-    all_data_rows = [row_names] # Pehli data row mein Naam aayenge
+        columns_time.append(unique_col_name)
+        row_names[unique_col_name] = strip['name']
+        
+    all_data_rows = [row_names] # Pehli data row mein sirf Naam aayenge
     
     # Dates ke hisab se Data Fetch karna
     current_date = start_date
@@ -116,7 +121,8 @@ def fetch_live_data(start_date, end_date):
             except:
                 pass 
                 
-            daily_record[strip['time']] = data_number
+            # Data ko naye Unique Column Name ke andar bharna
+            daily_record[strip['unique_col']] = data_number
             
         all_data_rows.append(daily_record)
         current_date += timedelta(days=1)
@@ -154,7 +160,7 @@ if fetch_button:
                 df_final.to_excel(FILE_NAME, index=False)
                 
                 st.success("✅ Fresh Data successfully nikal liya gaya hai!")
-                st.write("### 🆕 Excel Format Preview (Upar Time, Niche Naam)")
+                st.write("### 🆕 Excel Format Preview (Upar Time+Naam, Niche Naam)")
                 st.dataframe(df_final)
                 
                 # Download File
