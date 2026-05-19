@@ -8,44 +8,37 @@ from datetime import datetime
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-st.set_page_config(page_title="Satta Data - Ultra Fast & Resume", layout="wide")
+st.set_page_config(page_title="Satta Data - Pro Fix", layout="wide")
 
-st.title("⚡ Ultra Fast Satta Extractor (Resume Enabled)")
-st.write("Ye version data ko 'Resume' kar sakta hai aur multiple threads se fast download karta hai.")
+st.title("⚡ Satta Extractor (Fixed Multi-Thread)")
 
-# 1. Session State Initialize (Resume karne ke liye)
+# 1. Session State Initialization
 if 'master_data' not in st.session_state:
     st.session_state.master_data = []
 if 'processed_months' not in st.session_state:
-    st.session_state.processed_months = []
+    st.session_state.processed_months = set() # Set for faster lookup
 if 'unique_shifts' not in st.session_state:
     st.session_state.unique_shifts = set()
 
-# Mirror Sites
 SITES = [
     "https://satta-king-fast.com/chart.php",
     "https://sattaking-fast.com/chart.php",
-    "https://satta-fast.com/chart.php",
-    "https://satta-king-chart.org/chart.php"
+    "https://satta-fast.com/chart.php"
 ]
 
-# UI for Inputs
+# UI Inputs
 col1, col2 = st.columns(2)
 with col1:
-    start_date = st.date_input("Start Date", datetime(2020, 1, 1))
+    start_date = st.date_input("Start Date", datetime(2018, 1, 1))
 with col2:
     end_date = st.date_input("End Date", datetime.now())
 
+# --- FIXED FUNCTION (Removed Session State access inside thread) ---
 def scrape_single_month(dt):
-    """Ek single mahine ka data nikalne ka function"""
     m = str(dt.month).zfill(2)
     y = str(dt.year)
     month_id = f"{m}-{y}"
     
-    # Agar ye mahina pehle hi process ho chuka hai, toh skip karein
-    if month_id in st.session_state.processed_months:
-        return None
-
     scraper = cloudscraper.create_scraper()
     site_url = random.choice(SITES)
     target_url = f"{site_url}?month={m}&year={y}"
@@ -66,10 +59,10 @@ def scrape_single_month(dt):
                         cols = row.find_all(['td', 'th'])
                         if len(cols) < 2: continue
                         
-                        day = re.findall(r'\d+', cols[0].text.strip())
-                        if not day: continue
+                        day_match = re.findall(r'\d+', cols[0].text.strip())
+                        if not day_match: continue
                         
-                        clean_date = f"{day[0].zfill(2)}-{m}-{y}"
+                        clean_date = f"{day_match[0].zfill(2)}-{m}-{y}"
                         
                         for idx, col in enumerate(cols):
                             if idx == 0 or idx >= len(headers): continue
@@ -78,70 +71,74 @@ def scrape_single_month(dt):
                                 month_records.append({
                                     'DATE': clean_date,
                                     'SHIFT': shift,
-                                    'VALUE': col.text.strip(),
-                                    'month_id': month_id
+                                    'VALUE': col.text.strip()
                                 })
-                    return month_records, headers[1:]
-    except:
+                    return month_records, headers[1:], month_id
+    except Exception:
         return "error"
     return None
 
-# Buttons
+# Controls
 c1, c2, c3 = st.columns(3)
 with c1:
     start_btn = st.button("🚀 Start/Resume Fetching")
 with c2:
-    if st.button("🛑 Clear Memory/Reset"):
+    if st.button("🛑 Reset Everything"):
         st.session_state.master_data = []
-        st.session_state.processed_months = []
+        st.session_state.processed_months = set()
         st.session_state.unique_shifts = set()
         st.rerun()
 
 if start_btn:
     date_range = pd.date_range(start=start_date, end=end_date, freq='MS')
-    # Filter out already processed months
+    
+    # FILTERING: Thread ke bahar hi filter kar lo taaki thread ko session_state na dekhna pade
     remaining_months = [dt for dt in date_range if f"{str(dt.month).zfill(2)}-{dt.year}" not in st.session_state.processed_months]
     
     if not remaining_months:
-        st.success("Saara data pehle hi nikal chuka hai!")
+        st.success("Saara data tayyar hai!")
     else:
-        st.info(f"Bacha hua data nikal raha hoon... ({len(remaining_months)} mahine baaki)")
+        st.info(f"Bacha hua data nikal raha hoon... ({len(remaining_months)} mahine)")
         progress_bar = st.progress(0)
+        status_text = st.empty()
         
-        # MULTI-THREADING: 4 mahine ek saath load honge
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        # Max workers ko 3 rakha hai taaki block na ho
+        with ThreadPoolExecutor(max_workers=3) as executor:
             future_to_month = {executor.submit(scrape_single_month, dt): dt for dt in remaining_months}
             
             for i, future in enumerate(as_completed(future_to_month)):
-                result = future.result()
                 dt = future_to_month[future]
                 m_id = f"{str(dt.month).zfill(2)}-{dt.year}"
                 
-                if result == "error":
-                    st.warning(f"Atak gaya: {m_id}. Agle button click par resume hoga.")
-                elif result:
-                    month_data, month_shifts = result
-                    st.session_state.master_data.extend(month_data)
-                    st.session_state.processed_months.append(m_id)
-                    st.session_state.unique_shifts.update(month_shifts)
+                try:
+                    result = future.result()
+                    if result == "error":
+                        status_text.warning(f"Failed: {m_id}. Next time try karenge.")
+                    elif result:
+                        month_data, month_shifts, res_id = result
+                        st.session_state.master_data.extend(month_data)
+                        st.session_state.processed_months.add(res_id)
+                        st.session_state.unique_shifts.update(month_shifts)
+                        status_text.text(f"Done: {res_id}")
+                except Exception as e:
+                    status_text.error(f"Thread Error: {str(e)}")
                 
                 progress_bar.progress((i + 1) / len(remaining_months))
-                # Chhota delay taaki anti-bot trigger na ho
                 time.sleep(random.uniform(1, 2))
 
-# Display Data if exists
+# Result Display
 if st.session_state.master_data:
-    df = pd.DataFrame(st.session_state.master_data)
-    # Pivot for Excel structure
-    pivot_df = df.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
+    df_raw = pd.DataFrame(st.session_state.master_data)
+    # Pivot for exact Excel format
+    df_pivot = df_raw.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
     
-    # Sorting (Latest Date at bottom)
-    pivot_df['dt_obj'] = pd.to_datetime(pivot_df['DATE'], format='%d-%m-%Y', dayfirst=True)
-    pivot_df = pivot_df.sort_values('dt_obj').drop('dt_obj', axis=1, errors='ignore')
+    # Simple Column Sorting
+    shifts_cols = [c for c in df_pivot.columns if c != 'DATE']
+    # Final Columns: DATE + Sorted Shifts
+    df_pivot = df_pivot[['DATE'] + sorted(shifts_cols)]
     
-    st.subheader("Data Preview (Live)")
-    st.dataframe(pivot_df)
+    st.dataframe(df_pivot)
     
-    csv = pivot_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-    st.download_button("📥 Download Full CSV", data=csv, file_name="satta_final_resume.csv")
-            
+    csv = df_pivot.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+    st.download_button("📥 Download Full CSV", data=csv, file_name="satta_full_data.csv")
+    
