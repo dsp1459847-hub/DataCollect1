@@ -8,35 +8,32 @@ import os
 from datetime import datetime
 import re
 
-st.set_page_config(page_title="Satta DB Pro", layout="wide")
+st.set_page_config(page_title="Satta DB Final", layout="wide")
 
+# Permanent Storage
 DB_FILE = "satta_master_db.csv"
 
-# --- Functions ---
-def load_db():
-    if os.path.exists(DB_FILE):
-        try:
-            return pd.read_csv(DB_FILE)
-        except: return pd.DataFrame()
-    return pd.DataFrame()
+st.title("🛡️ Satta Master DB (Permanent Download Fixed)")
 
-def save_db(records):
-    if not records: return
-    new_df = pd.DataFrame(records)
-    if os.path.exists(DB_FILE):
-        old_df = pd.read_csv(DB_FILE)
-        combined = pd.concat([old_df, new_df], ignore_index=True)
-        combined.drop_duplicates(subset=['DATE', 'SHIFT'], keep='last', inplace=True)
-        combined.to_csv(DB_FILE, index=False)
-    else:
-        new_df.to_csv(DB_FILE, index=False)
+# 1. Database Check & Load
+if not os.path.exists(DB_FILE):
+    # Khali file bana do agar nahi hai
+    pd.DataFrame(columns=['DATE', 'SHIFT', 'VALUE']).to_csv(DB_FILE, index=False)
 
-def fetch_data(dt):
+def get_data_count():
+    try:
+        temp_df = pd.read_csv(DB_FILE)
+        return len(temp_df), temp_df
+    except:
+        return 0, pd.DataFrame()
+
+# --- Scraper Engine ---
+def fetch_month(dt):
     m, y = str(dt.month).zfill(2), str(dt.year)
     scraper = cloudscraper.create_scraper()
     url = f"https://satta-king-fast.com/chart.php?month={m}&year={y}"
     try:
-        res = scraper.get(url, timeout=20)
+        res = scraper.get(url, timeout=25)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
             table = soup.find('table')
@@ -57,65 +54,65 @@ def fetch_data(dt):
     except: return None
     return None
 
-# --- UI Layout ---
-st.title("🗄️ Satta Database Master (Final Fix)")
+# --- UI SECTION ---
 
-master_df = load_db()
+# Download Button ko HAMESHA sabse upar rakho
+count, current_df = get_data_count()
 
-# DOWNLOAD BUTTON KO SABSE UPAR RAKHA HAI
-if not master_df.empty:
-    pivot_df = master_df.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
-    # Date sorting
-    pivot_df['dt_obj'] = pd.to_datetime(pivot_df['DATE'], format='%d-%m-%Y', dayfirst=True)
-    pivot_df = pivot_df.sort_values('dt_obj', ascending=False).drop('dt_obj', axis=1)
-    
-    st.subheader("✅ Data Download Section")
-    csv_bytes = pivot_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-    st.download_button(
-        label="📥 DOWNLOAD NOW (Abhi Tak Ka Saara Data)",
-        data=csv_bytes,
-        file_name=f"Satta_Update_{datetime.now().strftime('%d_%m_%Y')}.csv",
-        mime="text/csv",
-        key='main_download'
-    )
-    st.divider()
+if count > 0:
+    st.subheader("📥 Download Zone")
+    # Pivot for Excel
+    try:
+        pivot_df = current_df.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
+        # Sahi date sorting
+        pivot_df['dt_obj'] = pd.to_datetime(pivot_df['DATE'], format='%d-%m-%Y', dayfirst=True, errors='coerce')
+        pivot_df = pivot_df.sort_values('dt_obj', ascending=False).drop('dt_obj', axis=1)
+        
+        csv_data = pivot_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+        st.download_button(
+            label=f"Download {count} Records (Excel CSV)",
+            data=csv_data,
+            file_name=f"Satta_Data_{datetime.now().strftime('%Y-%m-%d')}.csv",
+            mime="text/csv",
+            key="always_on_download"
+        )
+    except Exception as e:
+        st.error(f"Table Error: {e}")
 
-# Inputs
+st.divider()
+
+# Input Controls
 c1, c2 = st.columns(2)
 with c1: start_date = st.date_input("Start Date", datetime(2018, 1, 1))
 with c2: end_date = st.date_input("End Date", datetime.now())
 
-if st.button("🚀 Sync / Update New Data"):
+if st.button("🚀 Start Sync / Update"):
     months = pd.date_range(start=start_date, end=end_date, freq='MS')
     pb = st.progress(0)
-    st_status = st.empty()
+    st_msg = st.empty()
     
     for i, dt in enumerate(months):
         m_id = dt.strftime("%m-%Y")
-        st_status.info(f"Processing: {m_id}...")
+        st_msg.info(f"Working on: {m_id}...")
         
-        # Hamesha current month update karein ya jo DB mein nahi hai
-        if master_df.empty or m_id == datetime.now().strftime("%m-%Y") or not master_df['DATE'].str.contains(m_id).any():
-            new_recs = fetch_data(dt)
-            if new_recs:
-                save_db(new_recs)
-                st_status.success(f"Saved to File: {m_id}")
-            else:
-                st_status.error(f"Skipped/Failed: {m_id}")
+        # Har bar fetch karke file mein append karo
+        new_recs = fetch_month(dt)
+        if new_recs:
+            new_df = pd.DataFrame(new_recs)
+            old_df = pd.read_csv(DB_FILE)
+            combined = pd.concat([old_df, new_df], ignore_index=True)
+            combined.drop_duplicates(subset=['DATE', 'SHIFT'], keep='last', inplace=True)
+            combined.to_csv(DB_FILE, index=False)
+            st_msg.success(f"Saved: {m_id}")
         
         pb.progress((i + 1) / len(months))
-        time.sleep(random.uniform(1.5, 2.5))
+        time.sleep(random.uniform(1, 2))
     
-    st_status.success("✅ Sab Kuch Update Ho Gaya Hai!")
+    st_msg.success("✅ All data synced! Refreshing...")
     time.sleep(1)
     st.rerun()
 
-# Preview niche dikhayenge
-if not master_df.empty:
-    st.subheader("Preview (Last 50 Days)")
-    st.dataframe(pivot_df.head(50))
-
-if st.sidebar.button("🗑️ Reset Database"):
+if st.sidebar.button("🗑️ Reset All Data"):
     if os.path.exists(DB_FILE): os.remove(DB_FILE)
     st.rerun()
     
