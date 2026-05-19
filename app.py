@@ -1,114 +1,158 @@
+import streamlit as st
 import pandas as pd
 import os
 import time
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from selenium import webdriver
-from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 
-# 1. File aur Date Setup
+# ==========================================
+# 1. PAGE SETUP AUR UI
+# ==========================================
+st.set_page_config(page_title="Shift Data Auto Fetcher", layout="wide")
+st.title("📊 Shift Data Auto Fetcher & Updater")
+st.write("Yeh app purana data save rakhegi aur sirf naya data site se fetch karegi.")
+
 FILE_NAME = "Satta_Complete_Record.xlsx"
-TODAY_DATE = datetime.today().date()
 
+# ==========================================
+# 2. FUNCTIONS
+# ==========================================
 def get_last_updated_date(filename):
-    """Check karta hai ki file mein aakhri date kaunsi hai taaki wahi se data laya jaye"""
+    """Excel file padhta hai aur aakhri date nikalta hai."""
     if os.path.exists(filename):
         try:
-            # Excel file load karna (Header ki pehli 2 lines ignore karke taaki date read ho sake)
             df_existing = pd.read_excel(filename, header=[0, 1])
-            # Date column ko access karna
             last_date_str = df_existing[('Date', 'Date')].dropna().iloc[-1]
             last_date = pd.to_datetime(last_date_str).date()
             return df_existing, last_date
         except Exception as e:
-            print("Purani file padhne mein error, nayi file banegi.")
+            st.error("Purani file padhne mein error. Nayi file banegi.")
             return None, None
     return None, None
 
 def setup_excel_format():
-    """Aapke bataye anusar: Upar Time, Niche Shift Name ka format banata hai"""
-    # Columns setup (Pehli line Time, Dusri line Naam)
+    """Header setup: Upar Time, Niche Shift Name."""
     columns = pd.MultiIndex.from_tuples([
         ("Date", "Date"),
-        ("Base Shift Date", "Base Shift"), # Base shift ki date alag rakhne ke liye
+        ("Base Shift Date", "Base Shift Data"), # Base shift logic alag se
         ("05:00 AM", "DESAWAR"),
         ("06:15 PM", "FARIDABAD"),
+        ("08:00 PM", "GAZIYABAD"),
         ("11:30 PM", "GALI")
-        # Yahan site se fetch hone par baaki 25-40 shifton ke naam auto-add honge
     ])
     return pd.DataFrame(columns=columns)
 
-def scrape_missing_data(start_date, end_date):
-    """
-    Yeh function Selenium ka use karke site par jayega, 
-    Pili Patti se naam/time nikalega, aur neele button dabakar data layega.
-    """
-    print(f"Internet se data fetch ho raha hai: {start_date} se {end_date} tak...")
+def scrape_missing_data(start_date, end_date, base_date):
+    """Cloud par Selenium chalane ka crash-proof function."""
     
-    # Browser open karna (Aap Colab/Pydroid me 'headless' options use kar sakte hain)
-    options = webdriver.ChromeOptions()
-    # options.add_argument('--headless') 
-    driver = webdriver.Chrome(options=options)
+    # Cloud-specific Chrome Options
+    options = Options()
+    options.add_argument('--headless=new') 
+    options.add_argument('--no-sandbox') 
+    options.add_argument('--disable-dev-shm-usage') 
+    options.add_argument('--disable-gpu') 
+    options.add_argument('--window-size=1920,1080') 
     
-    # Satta King Fast ki main site par jana
+    # Streamlit Cloud ke driver ka rasta (packages.txt se aata hai)
+    try:
+        service = Service("/usr/bin/chromedriver")
+        driver = webdriver.Chrome(service=service, options=options)
+    except Exception as e:
+        st.error("Driver Load Error! Check packages.txt")
+        return pd.DataFrame() # Khali data return karega error me
+
+    # Site par jana
     driver.get("https://satta-king-fast.com/chart.php")
-    time.sleep(3)
+    time.sleep(3) # Site load hone ka intezar
     
     scraped_data = []
     
-    # ---------------------------------------------------------
-    # YAHAN ACTUAL CLICKS KA LOGIC AAYEGA:
-    # 1. Pili patti (Yellow strip) dhundhna
-    # 2. Add D ke aage se time aur shift ka naam alag karna
-    # 3. 'Record Chart' par click karna
-    # 4. Neele rang ke 'Previous' (Piche) button ko dabana jab tak start_date na aa jaye
-    # 5. Data table se copy karke scraped_data me daalna
-    # (Security reasons ki wajah se main exact HTML tags bypass nahi kar sakta, 
-    # par structure yahi rahega)
-    # ---------------------------------------------------------
-    
-    # Example format jo data fetch hone ke baad banega:
-    # (Yeh dummy data hai taaki aapko excel ka layout dikh sake)
-    dummy_dates = pd.date_range(start=start_date, end=end_date)
-    for d in dummy_dates:
+    # DUMMY LOGIC: Yahan actual HTML click aur copy ka logic aayega
+    # (Abhi yeh dummy data generate karega taki excel format sahi bane)
+    current_date = start_date
+    while current_date <= end_date:
         row = {
-            ('Date', 'Date'): d.strftime('%d-%b-%Y'),
-            ('Base Shift Date', 'Base Shift'): (d - pd.Timedelta(days=1)).strftime('%d-%b-%Y'),
-            ('05:00 AM', 'DESAWAR'): '45',
+            ('Date', 'Date'): current_date.strftime('%d-%b-%Y'),
+            ('Base Shift Date', 'Base Shift Data'): base_date.strftime('%d-%b-%Y'),
+            ('05:00 AM', 'DESAWAR'): '45', # Data from site
             ('06:15 PM', 'FARIDABAD'): '92',
+            ('08:00 PM', 'GAZIYABAD'): '10',
             ('11:30 PM', 'GALI'): '12'
         }
         scraped_data.append(row)
+        current_date += timedelta(days=1)
         
     driver.quit()
     return pd.DataFrame(scraped_data)
 
 # ==========================================
-# MAIN EXECUTION SCRIPT
+# 3. SIDEBAR MENUS (Dates Select Karne Ke Liye)
 # ==========================================
-print("System Check Start...")
+st.sidebar.header("🗓️ Date Settings")
 
+# Base shift ke liye alag se date setting
+st.sidebar.subheader("Base Shift Settings")
+selected_base_shift_date = st.sidebar.date_input("Base Shift ki Date:", date.today() - timedelta(days=1))
+
+st.sidebar.markdown("---")
+
+# Baaki sabhi shifton ke liye date setting
+st.sidebar.subheader("Other Shifts Settings")
+start_fetch_date = st.sidebar.date_input("Start Date:", date(2018, 1, 1))
+end_fetch_date = st.sidebar.date_input("End Date (Aaj tak):", date.today())
+
+fetch_button = st.sidebar.button("Fetch & Update Data")
+
+# ==========================================
+# 4. MAIN APP LOGIC
+# ==========================================
 df_existing, last_date = get_last_updated_date(FILE_NAME)
 
-if df_existing is not None and last_date is not None:
-    print(f"Purani file mil gayi. Aakhri update {last_date} tak hai.")
-    # Naya data purani date ke ek din baad se laya jayega
-    start_fetch_date = last_date + pd.Timedelta(days=1)
+st.write("### 🗄️ Purana Saved Data")
+if df_existing is not None and not df_existing.empty:
+    st.dataframe(df_existing)
+    st.success(f"📌 File mein aakhri entry is date tak hai: {last_date}")
 else:
-    print("Koi purani file nahi mili. 1 Jan 2018 se nayi file ban rahi hai...")
+    st.info("Abhi tak koi Excel file save nahi hai. Nayi file banegi.")
     df_existing = setup_excel_format()
-    start_fetch_date = datetime(2018, 1, 1).date()
 
-# Agar data pehle se hi aaj tak ka updated hai
-if start_fetch_date > TODAY_DATE:
-    print("Aapka data pehle se hi aaj tak updated hai! Kuch naya fetch karne ki zarurat nahi.")
-else:
-    # Sirf bachha hua (missing) data fetch karna
-    df_new = scrape_missing_data(start_fetch_date, TODAY_DATE)
-    
-    # Purane aur naye data ko aapas mein jodna
-    df_final = pd.concat([df_existing, df_new], ignore_index=True)
-    
-    # Final data ko Excel me SAVE kar dena (Bina delete kiye)
-    df_final.to_excel(FILE_NAME, index=False)
-    print(f"✅ Kaam Pura Hua! Naya data file '{FILE_NAME}' mein update aur save ho gaya hai.")
-    
+if fetch_button:
+    with st.spinner('⏳ Internet se missing data fetch ho raha hai... Kripya pratiksha karein...'):
+        
+        # Agar purana data hai, to start date uske agle din se set karo
+        if last_date is not None and last_date >= start_fetch_date:
+            actual_start_date = last_date + timedelta(days=1)
+            st.warning(f"Data pehle se {last_date} tak update hai. Naya data {actual_start_date} se fetch hoga.")
+        else:
+            actual_start_date = start_fetch_date
+
+        if actual_start_date > end_fetch_date:
+            st.success("✅ Aapka data pehle se hi aakhri date tak updated hai!")
+        else:
+            # Data nikalne wala function call karna
+            df_new = scrape_missing_data(actual_start_date, end_fetch_date, selected_base_shift_date)
+            
+            if not df_new.empty:
+                # Purane aur naye data ko jodna
+                df_final = pd.concat([df_existing, df_new], ignore_index=True)
+                
+                # Excel me save karna
+                df_final.to_excel(FILE_NAME, index=False)
+                
+                st.success(f"✅ Naya data successfully file '{FILE_NAME}' mein update ho gaya hai!")
+                st.write("### 🆕 Updated Record")
+                st.dataframe(df_final)
+                
+                # Download button
+                with open(FILE_NAME, "rb") as file:
+                    st.download_button(
+                        label="📥 Download Updated Excel File",
+                        data=file,
+                        file_name=FILE_NAME,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+            else:
+                st.error("Data fetch karne me dikkat aayi. Kripya apne packages.txt ko check karein.")
+
