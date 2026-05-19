@@ -21,7 +21,6 @@ FILE_NAME = "Fresh_Satta_Record.xlsx"
 # 2. CORE LIVE SCRAPING ENGINE (Crash-Proof)
 # ==========================================
 def fetch_live_data(start_date, end_date):
-    """Asli data fetch karne wala engine jo Record Chart par click karega"""
     options = Options()
     options.add_argument('--headless=new') 
     options.add_argument('--no-sandbox') 
@@ -38,9 +37,8 @@ def fetch_live_data(start_date, end_date):
 
     # Site par jana
     driver.get("https://satta-king-fast.com/chart.php")
-    time.sleep(4) # Site load hone ka intezar
+    time.sleep(4) 
     
-    # Pattiyon (Strips) se Time aur Naam nikalna
     strips_info = []
     
     # 'RECORD CHART' wale sabhi buttons dhundhna
@@ -48,16 +46,13 @@ def fetch_live_data(start_date, end_date):
     
     for idx, button in enumerate(record_buttons):
         try:
-            # Patti ka poora text padhna
             strip_element = button.find_element(By.XPATH, "..")
             text = strip_element.text.split("RECORD")[0].strip()
             
-            # Text ko tod kar Naam aur Time alag karna
             words = text.split()
             if len(words) >= 2:
-                shift_name = words[0] # Pehla word naam hota hai
+                shift_name = words[0] 
                 
-                # Time dhundhna (AM/PM ke hisab se)
                 time_str = "Time N/A"
                 for i in range(len(words)):
                     if words[i] in ['AM', 'PM'] and i > 0:
@@ -74,45 +69,54 @@ def fetch_live_data(start_date, end_date):
             continue
 
     # ---------------------------------------------------------
-    # YAHAN ERROR THEEK KIYA GAYA HAI (Duplicate Column Fix)
+    # ERROR FIX: Duplicate Column Hamesha Ke Liye Khatam
     # ---------------------------------------------------------
     columns_time = ["Date"]
     row_names = {"Date": "Date"}
     
+    seen_shift_names = set() # Check karne ke liye ki shift pehle aa chuki hai ya nahi
+    unique_strips = []
+    
     for strip in strips_info:
-        # Time ke sath Naam jod diya taki koi 2 column same na ho jayein
-        unique_col_name = f"{strip['time']} ({strip['name']})"
-        strip['unique_col'] = unique_col_name # Isko aage data bharne ke liye save rakha
-        
-        columns_time.append(unique_col_name)
-        row_names[unique_col_name] = strip['name']
-        
-    all_data_rows = [row_names] # Pehli data row mein sirf Naam aayenge
+        # Agar yeh shift name pehle nahi dekha gaya hai, tabhi isko list mein daalna hai
+        if strip['name'] not in seen_shift_names:
+            seen_shift_names.add(strip['name'])
+            
+            unique_col_name = f"{strip['time']} ({strip['name']})"
+            
+            # Agar fir bhi galti se column name match kar jaye (100% safety)
+            while unique_col_name in columns_time:
+                unique_col_name += " *"
+                
+            strip['unique_col'] = unique_col_name
+            columns_time.append(unique_col_name)
+            row_names[unique_col_name] = strip['name']
+            
+            unique_strips.append(strip) # Sirf unique strips ko aage click karne ke liye save kiya
+            
+    all_data_rows = [row_names] 
     
     # Dates ke hisab se Data Fetch karna
     current_date = start_date
     while current_date <= end_date:
-        date_str = current_date.strftime('%d-%b-%Y') # Site ka format
+        date_str = current_date.strftime('%d-%b-%Y') 
         daily_record = {
             "Date": current_date.strftime('%d-%m-%Y')
         }
         
-        # Har patti ke Record chart par click karke data lana
-        for strip in strips_info:
-            data_number = "" # Khali jagah agar data na mile
+        # Ab sirf UNIQUE strips ke button par click karega (Koi duplicate clash nahi hoga)
+        for strip in unique_strips:
+            data_number = "" 
             try:
-                # Button par click karna
                 driver.execute_script("arguments[0].scrollIntoView();", strip['button'])
                 driver.execute_script("arguments[0].click();", strip['button'])
-                time.sleep(1.5) # Table load hone ka wait
+                time.sleep(1.5) 
                 
-                # Niche khule hue table se is date ka number nikalna
                 tables = driver.find_elements(By.TAG_NAME, "table")
                 for table in tables:
                     if table.is_displayed():
                         rows = table.find_elements(By.TAG_NAME, "tr")
                         for row in rows:
-                            # Agar date match ho jaye
                             if str(current_date.day) in row.text or date_str in row.text:
                                 cols = row.find_elements(By.TAG_NAME, "td")
                                 if len(cols) > 1:
@@ -121,7 +125,6 @@ def fetch_live_data(start_date, end_date):
             except:
                 pass 
                 
-            # Data ko naye Unique Column Name ke andar bharna
             daily_record[strip['unique_col']] = data_number
             
         all_data_rows.append(daily_record)
@@ -129,7 +132,7 @@ def fetch_live_data(start_date, end_date):
         
     driver.quit()
     
-    # Final DataFrame banana
+    # Ab data banate waqt koi duplicate column naam nahi milega
     df = pd.DataFrame(all_data_rows, columns=columns_time)
     return df
 
@@ -156,14 +159,12 @@ if fetch_button:
             df_final = fetch_live_data(start_fetch_date, end_fetch_date)
             
             if df_final is not None and not df_final.empty:
-                # Excel mein save karna
                 df_final.to_excel(FILE_NAME, index=False)
                 
                 st.success("✅ Fresh Data successfully nikal liya gaya hai!")
                 st.write("### 🆕 Excel Format Preview (Upar Time+Naam, Niche Naam)")
                 st.dataframe(df_final)
                 
-                # Download File
                 with open(FILE_NAME, "rb") as file:
                     st.download_button(
                         label="📥 Download Fresh Excel File",
