@@ -8,11 +8,14 @@ import os
 from datetime import datetime
 import re
 
-st.set_page_config(page_title="Satta DB Final Fix", layout="wide")
+st.set_page_config(page_title="Satta Data Pro - Final", layout="wide")
 
+# Database file
 DB_FILE = "satta_master_db.csv"
 
-# --- Database Load/Save ---
+st.title("🚀 Satta Data Master (No-Refresh Fix)")
+
+# --- Core Functions ---
 def load_db():
     if os.path.exists(DB_FILE):
         try: return pd.read_csv(DB_FILE)
@@ -30,7 +33,6 @@ def save_to_db(records):
     else:
         new_df.to_csv(DB_FILE, index=False)
 
-# --- Scraper Engine ---
 def fetch_month(dt):
     m, y = str(dt.month).zfill(2), str(dt.year)
     scraper = cloudscraper.create_scraper()
@@ -57,68 +59,67 @@ def fetch_month(dt):
     except: return None
     return None
 
-# --- UI SECTION ---
-st.title("🛡️ Satta Master DB (No-Restart Download)")
-
-# Data load karo
-master_df = load_db()
-
-# AGAR DATA HAI TO DOWNLOAD PEHLE DIKHAO
-if not master_df.empty:
-    st.subheader("📥 Download Your Excel File")
-    
-    # Pivot logic
-    pivot_df = master_df.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
-    pivot_df['dt_obj'] = pd.to_datetime(pivot_df['DATE'], format='%d-%m-%Y', dayfirst=True, errors='coerce')
-    pivot_df = pivot_df.sort_values('dt_obj', ascending=False).drop('dt_obj', axis=1)
-    
-    csv_data = pivot_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
-    
-    # Bada Download Button
-    st.download_button(
-        label="🟢 CLICK HERE TO DOWNLOAD EXCEL (CSV)",
-        data=csv_data,
-        file_name=f"Satta_Data_Export_{datetime.now().strftime('%Y-%m-%d')}.csv",
-        mime="text/csv",
-        use_container_width=True
-    )
-    st.success(f"Database mein total {len(master_df)} entries saved hain.")
-    st.divider()
+# --- UI Setup ---
+# 1. Pehle se saved data dikhao
+current_data = load_db()
 
 # Input Section
 col1, col2 = st.columns(2)
 with col1: start_date = st.date_input("Start Date", datetime(2018, 1, 1))
 with col2: end_date = st.date_input("End Date", datetime.now())
 
-if st.button("🚀 Start Sync / Update Data"):
+# Main Action Button
+if st.button("🔄 Sync & Prepare Download"):
     months = pd.date_range(start=start_date, end=end_date, freq='MS')
     pb = st.progress(0)
     st_msg = st.empty()
     
     for i, dt in enumerate(months):
         m_id = dt.strftime("%m-%Y")
-        st_msg.info(f"Syncing: {m_id}...")
+        st_msg.info(f"Downloading: {m_id}...")
         
         data = fetch_month(dt)
         if data:
             save_to_db(data)
-            st_msg.success(f"Saved to Disk: {m_id}")
         
         pb.progress((i + 1) / len(months))
         time.sleep(random.uniform(1, 2))
     
-    st.balloons() # Kaam khatam hone ka signal
-    st_msg.success("✅ ALL DATA DOWNLOADED & SAVED PERMANENTLY!")
-    time.sleep(2)
-    st.rerun()
-
-# Table Preview (Optional)
-if not master_df.empty:
-    with st.expander("View Data Table Preview"):
-        st.dataframe(pivot_df.head(100))
-
-# Reset Sidebar
-if st.sidebar.button("🗑️ Reset Local Database"):
-    if os.path.exists(DB_FILE): os.remove(DB_FILE)
-    st.rerun()
+    st.balloons()
+    st.success("✅ DATA SYNC COMPLETE!")
     
+    # Refresh current_data without rerun
+    current_data = load_db()
+
+# --- Download Section (Isse Rerun ki zaroorat nahi padegi) ---
+if not current_data.empty:
+    st.divider()
+    st.subheader("📥 Download Section")
+    
+    # Pivot for Excel
+    pivot_df = current_data.pivot(index='DATE', columns='SHIFT', values='VALUE').reset_index()
+    pivot_df['dt_obj'] = pd.to_datetime(pivot_df['DATE'], format='%d-%m-%Y', dayfirst=True, errors='coerce')
+    pivot_df = pivot_df.sort_values('dt_obj', ascending=False).drop('dt_obj', axis=1)
+    
+    csv_bytes = pivot_df.to_csv(index=False, encoding='utf-8-sig').encode('utf-8-sig')
+    
+    # Highlighted Download Button
+    st.download_button(
+        label="🔥 DOWNLOAD EXCEL FILE NOW 🔥",
+        data=csv_bytes,
+        file_name=f"Satta_Master_Data_{datetime.now().strftime('%H%M%S')}.csv",
+        mime="text/csv",
+        key="final_dl_button",
+        use_container_width=True
+    )
+    
+    st.write(f"Total entries available: {len(current_data)}")
+    with st.expander("Preview Data Table"):
+        st.dataframe(pivot_df.head(50))
+
+# Reset Button in Sidebar
+if st.sidebar.button("🗑️ Reset Database"):
+    if os.path.exists(DB_FILE):
+        os.remove(DB_FILE)
+        st.rerun()
+        
