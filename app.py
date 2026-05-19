@@ -11,16 +11,16 @@ from selenium.webdriver.common.by import By
 # ==========================================
 # 1. PAGE SETUP
 # ==========================================
-st.set_page_config(page_title="Shift Data Auto Fetcher", layout="wide")
+st.set_page_config(page_title="Live Shift Data Fetcher", layout="wide")
 st.title("📊 Live Shift Data Fetcher")
-st.write("Yeh app Pili/Safed pattiyon se fresh data nikal kar Excel banayegi.")
+st.write("Yeh app Pili/Safed pattiyon se sirf Start aur End date ke hisab se data nikalegi.")
 
 FILE_NAME = "Fresh_Satta_Record.xlsx"
 
 # ==========================================
-# 2. CORE LIVE SCRAPING ENGINE
+# 2. CORE LIVE SCRAPING ENGINE (No Base Shift)
 # ==========================================
-def fetch_live_data(start_date, end_date, base_shift_date):
+def fetch_live_data(start_date, end_date):
     """Asli data fetch karne wala engine jo Record Chart par click karega"""
     options = Options()
     options.add_argument('--headless=new') 
@@ -34,7 +34,7 @@ def fetch_live_data(start_date, end_date, base_shift_date):
         driver = webdriver.Chrome(service=service, options=options)
     except Exception as e:
         st.error("Driver Load Error! Kripya GitHub par 'packages.txt' file check karein.")
-        return None, None
+        return None
 
     # Site par jana
     driver.get("https://satta-king-fast.com/chart.php")
@@ -50,12 +50,12 @@ def fetch_live_data(start_date, end_date, base_shift_date):
         try:
             # Patti ka poora text padhna
             strip_element = button.find_element(By.XPATH, "..")
-            text = strip_element.text.split("RECORD")[0].strip() # Naam aur time nikalna
+            text = strip_element.text.split("RECORD")[0].strip()
             
             # Text ko tod kar Naam aur Time alag karna
             words = text.split()
             if len(words) >= 2:
-                shift_name = words[0] # Pehla word naam hota hai (e.g. DESAWAR)
+                shift_name = words[0] # Pehla word naam hota hai
                 
                 # Time dhundhna (AM/PM ke hisab se)
                 time_str = "Time N/A"
@@ -75,8 +75,8 @@ def fetch_live_data(start_date, end_date, base_shift_date):
 
     # Excel ka Structure Taiyar Karna
     # Row 1: Time, Row 2: Naam
-    columns_time = ["Date", "Base Shift Date"]
-    row_names = {"Date": "Date", "Base Shift Date": "Base Shift Data"}
+    columns_time = ["Date"]
+    row_names = {"Date": "Date"}
     
     for strip in strips_info:
         columns_time.append(strip['time'])
@@ -89,8 +89,7 @@ def fetch_live_data(start_date, end_date, base_shift_date):
     while current_date <= end_date:
         date_str = current_date.strftime('%d-%b-%Y') # Site ka format
         daily_record = {
-            "Date": current_date.strftime('%d-%m-%Y'),
-            "Base Shift Date": base_shift_date.strftime('%d-%m-%Y')
+            "Date": current_date.strftime('%d-%m-%Y')
         }
         
         # Har patti ke Record chart par click karke data lana
@@ -133,14 +132,9 @@ def fetch_live_data(start_date, end_date, base_shift_date):
 # ==========================================
 st.sidebar.header("🗓️ Date Settings")
 
-st.sidebar.subheader("Base Shift Settings")
-selected_base_date = st.sidebar.date_input("Base Shift ki Date:", date.today() - timedelta(days=1))
-
-st.sidebar.markdown("---")
-
-st.sidebar.subheader("Other Shifts Settings")
+st.sidebar.subheader("Select Dates")
 start_fetch_date = st.sidebar.date_input("Start Date:", date(2023, 11, 1))
-end_fetch_date = st.sidebar.date_input("End Date (Aaj tak):", date.today())
+end_fetch_date = st.sidebar.date_input("End Date:", date.today())
 
 fetch_button = st.sidebar.button("Fetch Live Data")
 
@@ -153,10 +147,10 @@ if fetch_button:
         if start_fetch_date > end_fetch_date:
             st.error("Start Date, End Date se aage nahi ho sakti.")
         else:
-            df_final = fetch_live_data(start_fetch_date, end_fetch_date, selected_base_date)
+            df_final = fetch_live_data(start_fetch_date, end_fetch_date)
             
             if df_final is not None and not df_final.empty:
-                # Excel mein save karna (Bina crash wale format me)
+                # Excel mein save karna
                 df_final.to_excel(FILE_NAME, index=False)
                 
                 st.success("✅ Fresh Data successfully nikal liya gaya hai!")
