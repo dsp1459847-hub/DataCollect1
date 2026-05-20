@@ -13,9 +13,9 @@ from selenium.webdriver.common.by import By
 # ==========================================
 # 1. PAGE & SYSTEM SETUP
 # ==========================================
-st.set_page_config(page_title="Verified Shift Fetcher", layout="wide")
-st.title("🛡️ 100+ Shifts Verified Data Fetcher")
-st.write("Ab code table ka naam verify karega tabhi data uthayega. Koi data mix nahi hoga!")
+st.set_page_config(page_title="100% Verified Shift Fetcher", layout="wide")
+st.title("🛡️ Verified 100+ Shifts AJAX Fetcher")
+st.write("Ab code shift ka naam verify karega aur Neele Button daba kar data nikalega!")
 
 TEMP_DIR = "temp_satta_data"
 if not os.path.exists(TEMP_DIR):
@@ -45,25 +45,10 @@ def save_shift_data(unique_col_name, data_dict):
     with open(os.path.join(TEMP_DIR, f"{safe_name}.json"), 'w') as f:
         json.dump(data_dict, f)
 
-def get_months_to_fetch(start_date, end_date):
-    """Start aur End date ke beech ke URL months banata hai"""
-    months = []
-    curr = start_date.replace(day=1)
-    while curr <= end_date.replace(day=1):
-        months.append({'month': curr.month, 'year': curr.year, 'month_name': curr.strftime('%B')})
-        next_m = curr.month + 1
-        next_y = curr.year
-        if next_m > 12:
-            next_m = 1
-            next_y += 1
-        curr = curr.replace(year=next_y, month=next_m)
-    return months
-
 # ==========================================
-# 3. STEP 1: SCAN 100+ SHIFTS (Slow Scroll Fix)
+# 3. STEP 1: SCAN 100+ SHIFTS
 # ==========================================
 def scan_all_shifts():
-    """Dheere dheere niche jayega taki poori 100+ shiften load ho jayein"""
     try:
         service = Service("/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=get_browser_options())
@@ -73,7 +58,7 @@ def scan_all_shifts():
     driver.get("https://satta-king-fast.com/chart.php")
     time.sleep(3)
     
-    # SLOW SCROLL FIX: Poora page dhyaan se scroll karega taaki 50 ki jagah 100+ load hon
+    # Slow Scroll taki sab load ho
     last_height = driver.execute_script("return document.body.scrollHeight")
     while True:
         driver.execute_script("window.scrollBy(0, 800);")
@@ -117,6 +102,7 @@ def scan_all_shifts():
                 u_col = time_str + (" " * (seen_times[time_str] - 1)) + f" ({name_str})"
                 
                 strips_info.append({
+                    'idx': idx,
                     'name': name_str, 
                     'time': time_str, 
                     'unique_col': u_col
@@ -133,40 +119,8 @@ def scan_all_shifts():
     return strips_info
 
 # ==========================================
-# 4. STEP 2: VERIFIED WORKER ENGINE
+# 4. STEP 2: VERIFIED WORKER ENGINE (Neele Button & Single Dates)
 # ==========================================
-def parse_verified_table(driver, shift_name, target_dates, results_dict, col_key, m_num, y_num):
-    """
-    YAHAN HAI AAPKA LOGIC: 
-    Sabse niche wale table par jayega, uska naam padhega, match hua toh hi data lega.
-    """
-    tables = driver.find_elements(By.TAG_NAME, "table")
-    
-    # Naya khula table hamesha page ke aakhir mein hota hai, isliye list ko ulta (reversed) padhenge
-    for table in reversed(tables):
-        if table.is_displayed():
-            header_text = table.text.lower()
-            
-            # VERIFICATION: Kya is table ke andar humari shift ka naam likha hai?
-            if shift_name.lower() in header_text:
-                rows = table.find_elements(By.TAG_NAME, "tr")
-                for row in rows:
-                    cols = row.find_elements(By.TAG_NAME, "td")
-                    # Date aur Result ko padhna
-                    for i in range(0, len(cols) - 1, 2):
-                        dt_text = cols[i].text.strip().lower()
-                        val = cols[i+1].text.strip()
-                        
-                        if val and val != "XX" and val != "-":
-                            for d_str, d_obj in target_dates.items():
-                                if d_obj.month == m_num and d_obj.year == y_num:
-                                    # Match exact date
-                                    if dt_text == str(d_obj.day) or dt_text == d_obj.strftime('%d') or d_obj.strftime('%d-%b-%Y').lower() in dt_text:
-                                        results_dict[d_str] = val
-                # Sahi table mil gaya aur padh liya, ab baaki tables ignore karo
-                return True 
-    return False
-
 def worker_fetch_single_shift(shift, start_date, end_date, date_list_strs):
     unique_col = shift['unique_col']
     shift_name = shift['name']
@@ -181,51 +135,97 @@ def worker_fetch_single_shift(shift, start_date, end_date, date_list_strs):
         return False
         
     shift_results = {}
-    months_list = get_months_to_fetch(start_date, end_date)
     
     try:
-        for m_info in months_list:
-            m_num = m_info['month']
-            y_num = m_info['year']
-            m_name = m_info['month_name']
+        driver.get("https://satta-king-fast.com/chart.php")
+        time.sleep(3)
+        
+        # 1. Scroll aur target button dhundhna
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        buttons = driver.find_elements(By.XPATH, "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'record chart')]")
+        
+        if shift['idx'] >= len(buttons):
+            return False
             
-            # Mahine ke URL par direct jana
-            url = f"https://satta-king-fast.com/chart.php?ResultFor={m_name}-{y_num}&month={m_num}&year={y_num}"
-            driver.get(url)
-            time.sleep(4)
+        target_btn = buttons[shift['idx']]
+        
+        # 2. Record chart par click (Naya table niche khulega)
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", target_btn)
+        time.sleep(1)
+        driver.execute_script("arguments[0].click();", target_btn)
+        time.sleep(3) # AJAX table load hone ka wait
+        
+        current_check_date = end_date
+        
+        # LOOP: Jab tak Start Date tak na pahunch jayein
+        while current_check_date >= start_date.replace(day=1):
             
-            # Dheere dheere scroll karna
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
+            # 3. YAHAN HAI NAAM VERIFICATION
+            tables = driver.find_elements(By.TAG_NAME, "table")
+            target_table = None
             
-            # Button dhundhna
-            buttons = driver.find_elements(By.XPATH, "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'record chart')]")
+            # Hamesha dusra ya aakhri table check karna (Permanent top 4 ko chhodkar)
+            for table in reversed(tables):
+                if table.is_displayed():
+                    try:
+                        parent_text = table.find_element(By.XPATH, "..").text.lower()
+                        # Agar Naam match hua, toh yahi sahi table hai!
+                        if shift_name.lower() in parent_text or shift_name.lower() in table.text.lower():
+                            target_table = table
+                            break
+                    except:
+                        pass
             
-            # Wahi same shift dhundhna jiska naam target mein hai
-            target_btn = None
-            for btn in buttons:
-                try:
-                    parent_text = btn.find_element(By.XPATH, "..").text.lower()
-                    if shift_name.lower() in parent_text:
-                        target_btn = btn
-                        break
-                except:
-                    pass
+            # 4. Single Dates (1, 2, 3... 31) aur Result padhna
+            if target_table:
+                rows = target_table.find_elements(By.TAG_NAME, "tr")
+                for row in rows:
+                    cols = row.find_elements(By.TAG_NAME, "td")
+                    for i in range(0, len(cols) - 1, 2):
+                        dt_text = cols[i].text.strip()
+                        val = cols[i+1].text.strip()
+                        
+                        if dt_text.isdigit() and val and val not in ["XX", "-"]:
+                            day_int = int(dt_text)
+                            
+                            # Exact us mahine ki tareekh ke samne data dalna
+                            for d_str, d_obj in date_list_strs.items():
+                                if d_obj.month == current_check_date.month and d_obj.year == current_check_date.year and d_obj.day == day_int:
+                                    shift_results[d_str] = val
             
-            if target_btn:
-                # Button click karna
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", target_btn)
-                time.sleep(1)
-                driver.execute_script("arguments[0].click();", target_btn)
-                time.sleep(3) # Naya table niche khulne ka wait
+            # Check limit
+            if current_check_date.year < start_date.year or (current_check_date.year == start_date.year and current_check_date.month <= start_date.month):
+                break
                 
-                # Verified data nikalna
-                parse_verified_table(driver, shift_name, date_list_strs, shift_results, unique_col, m_num, y_num)
+            # 5. NEELE BUTTON PAR CLICK KARNA (Pichla Mahina)
+            prev_m_date = current_check_date.replace(day=1) - timedelta(days=1)
+            prev_m_name = prev_m_date.strftime("%b").lower() # jaise 'oct'
+            prev_y_str = prev_m_date.strftime("%Y") # jaise '2023'
             
-        # Jab saare mahine pure ho jayein tab data save karein
+            clicked = False
+            blue_btns = driver.find_elements(By.XPATH, "//a | //button")
+            for btn in blue_btns:
+                if btn.is_displayed():
+                    btn_txt = btn.text.lower()
+                    # Button par pichle mahine ka naam aur saal likha hona chahiye
+                    if prev_m_name in btn_txt and prev_y_str in btn_txt:
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
+                        time.sleep(1)
+                        driver.execute_script("arguments[0].click();", btn)
+                        time.sleep(3) # Naya mahina update hone ka wait
+                        clicked = True
+                        break
+            
+            if not clicked:
+                break # Agar pichla button na mile, toh loop tod do
+                
+            current_check_date = prev_m_date
+            
+        # Jab saare mahine pure ho jayein tabhi data save karna
         save_shift_data(unique_col, shift_results)
         
-    except:
+    except Exception as e:
         pass
     finally:
         driver.quit()
@@ -243,18 +243,16 @@ st.sidebar.markdown("---")
 st.sidebar.header("🚀 Browser Settings")
 num_browsers = st.sidebar.slider("Ek sath kitne Browser kholne hain?", 1, 10, 5)
 
-# --- BUTTON 1: SCAN ---
 st.write("### 🛠️ Step 1: Saari Shifton Ki Pakki List Banayein")
 if st.button("1. Scan All Shifts"):
-    with st.spinner("Site ko dheere-dheere scroll karke poori 100+ shiften nikali ja rahi hain..."):
+    with st.spinner("Site scroll karke poori 100+ shiften verify ki ja rahi hain..."):
         s_list = scan_all_shifts()
         if s_list:
             st.success(f"✅ Scanning Poori! Site par exactly **{len(s_list)}** shiften mili hain.")
         else:
             st.error("Scan fail ho gaya.")
 
-# --- BUTTON 2: DOWNLOAD ---
-st.write("### 📥 Step 2: Data Download Karein (Batch Mode)")
+st.write("### 📥 Step 2: Verified Data Download Karein")
 if st.button("2. Start / Resume Download"):
     if not os.path.exists(MASTER_LIST_FILE):
         st.error("Pehle Step 1 dabakar scan poora karein!")
@@ -284,11 +282,10 @@ if st.button("2. Start / Resume Download"):
                     completed += 1
                     progress_bar.progress(int((completed / len(pending_shifts)) * 100))
                     
-            st.success("🎉 Saari bachi hui shifton ka data successfully download ho gaya hai!")
+            st.success("🎉 Saari bachi hui shifton ka Verified Data successfully download ho gaya hai!")
         else:
             st.success("✅ Saari shiften pehle se hi download ho chuki hain. Sidha Step 3 dabayein!")
 
-# --- BUTTON 3: EXCEL BANAO ---
 st.write("### 📊 Step 3: Excel File Taiyar Karein")
 if st.button("3. Create Final Excel"):
     if not os.path.exists(MASTER_LIST_FILE):
@@ -300,13 +297,11 @@ if st.button("3. Create Final Excel"):
         date_list_objs = [start_fetch_date + timedelta(days=x) for x in range((end_fetch_date - start_fetch_date).days + 1)]
         
         final_rows = []
-        # Header Row (Naam)
         row_names = {"Date": "Date"}
         for s in master_list:
             row_names[s['unique_col']] = s['name']
         final_rows.append(row_names)
         
-        # Asli Data
         for d_obj in date_list_objs:
             d_str = d_obj.strftime('%d-%m-%Y')
             r = {"Date": d_str}
@@ -328,4 +323,4 @@ if st.button("3. Create Final Excel"):
         st.success("✅ Excel File Taiyar Hai!")
         with open(FINAL_EXCEL, "rb") as file:
             st.download_button("📥 Download Final Excel", data=file, file_name=FINAL_EXCEL, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                
+        
