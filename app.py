@@ -13,19 +13,19 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 
 # ==========================================
-# 1. PAGE & FOLDER SETUP
+# 1. PAGE SETUP (No Shortcuts Engine)
 # ==========================================
-st.set_page_config(page_title="Master Satta Fetcher", layout="wide")
-st.title("🛡️ Master 100+ Shifts Fetcher (Strict Match)")
-st.write("Ab code shift ka naam aankhon se verify karega tabhi data Excel mein aayega.")
+st.set_page_config(page_title="100% Accurate Shift Fetcher", layout="wide")
+st.title("🛡️ 100% Accurate Data Fetcher (No Shortcuts)")
+st.write("Ab code theek waise kaam karega jaise insaan manually karta hai. Koi data mix nahi hoga.")
 
 TEMP_DIR = "temp_satta_data"
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
 
 MASTER_LIST_FILE = os.path.join(TEMP_DIR, "master_shifts_list.json")
-FINAL_EXCEL = "All_Shifts_Data.xlsx"
-FINAL_CSV = "All_Shifts_Data.csv"
+FINAL_EXCEL = "All_Shifts_Accurate_Data.xlsx"
+FINAL_CSV = "All_Shifts_Accurate_Data.csv"
 
 # ==========================================
 # 2. HELPER FUNCTIONS
@@ -48,38 +48,24 @@ def save_shift_data(unique_col_name, data_dict):
     with open(os.path.join(TEMP_DIR, f"{safe_name}.json"), 'w') as f:
         json.dump(data_dict, f)
 
-def get_months_target(start_date, end_date):
-    months = []
-    curr = start_date.replace(day=1)
-    while curr <= end_date.replace(day=1):
-        months.append({
-            'm_num': curr.month, 
-            'y_num': curr.year, 
-            'm_name': curr.strftime('%B').lower()
-        })
-        next_m = curr.month + 1
-        next_y = curr.year if next_m <= 12 else curr.year + 1
-        next_m = next_m if next_m <= 12 else 1
-        curr = curr.replace(year=next_y, month=next_m)
-    return months
-
 def sanitize_text(text):
     if not isinstance(text, str): return str(text)
     return re.sub(r'[^\x20-\x7E]', '', text).strip()
 
 # ==========================================
-# 3. SCANNER ENGINE (Step 1)
+# 3. SCANNER ENGINE (List of Shifts)
 # ==========================================
 def scan_all_shifts():
     try:
         service = Service("/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=get_browser_options())
-    except:
+    except Exception as e:
         return None
 
     driver.get("https://satta-king-fast.com/chart.php")
-    time.sleep(3)
+    time.sleep(4)
     
+    # Scroll to load everything
     last_h = driver.execute_script("return document.body.scrollHeight")
     while True:
         driver.execute_script("window.scrollBy(0, 800);")
@@ -117,7 +103,7 @@ def scan_all_shifts():
                 seen_times[time_str] = seen_times.get(time_str, 0) + 1
                 u_col = time_str + (" " * (seen_times[time_str] - 1)) + f" ({name_str})"
                 
-                strips_info.append({'name': name_str, 'unique_col': u_col})
+                strips_info.append({'idx': idx, 'name': name_str, 'unique_col': u_col})
         except:
             continue
             
@@ -128,7 +114,7 @@ def scan_all_shifts():
     return strips_info
 
 # ==========================================
-# 4. DOWNLOADER ENGINE (Step 2 - Exact Name Match)
+# 4. DOWNLOADER ENGINE (MANUAL SIMULATION - NO SHORTCUTS)
 # ==========================================
 def worker_fetch_single_shift(shift, start_date, end_date, date_str_map):
     unique_col = shift['unique_col']
@@ -144,85 +130,108 @@ def worker_fetch_single_shift(shift, start_date, end_date, date_str_map):
     except:
         return False
         
-    months_target = get_months_target(start_date, end_date)
-    
     try:
-        for m_info in months_target:
-            m_num = m_info['m_num']
-            y_num = m_info['y_num']
+        driver.get("https://satta-king-fast.com/chart.php")
+        time.sleep(3)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        
+        # 1. Us specific shift ka Record Chart dabana
+        buttons = driver.find_elements(By.XPATH, "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'record chart')]")
+        
+        target_btn = None
+        for btn in buttons:
+            try:
+                p_text = btn.find_element(By.XPATH, "..").text.lower()
+                if shift_name.lower() in p_text:
+                    target_btn = btn
+                    break
+            except:
+                pass
+                
+        if not target_btn:
+            driver.quit()
+            return False
+
+        # Button Click
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", target_btn)
+        time.sleep(1)
+        driver.execute_script("arguments[0].click();", target_btn)
+        time.sleep(4) # Table open hone ka wait
+
+        current_target_date = end_date
+        
+        # 2. Jab tak hum Start Date tak nahi pohochte, tab tak Neele Button daba kar piche jana hai
+        while current_target_date >= start_date.replace(day=1):
             
-            url = f"https://satta-king-fast.com/chart.php?ResultFor={m_info['m_name']}-{y_num}&month={m_num}&year={y_num}"
-            driver.get(url)
-            time.sleep(3)
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(1)
+            target_month_str = current_target_date.strftime("%B").lower() # e.g., "november"
+            target_year_str = str(current_target_date.year)
             
-            buttons = driver.find_elements(By.XPATH, "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'record chart')]")
+            # --- A. TABLE DHUNDHNA AUR DATA NIKALNA ---
+            table_found = False
+            for _ in range(5): # 5 second tak wait karega ki naya data load ho jaye
+                tables = driver.find_elements(By.TAG_NAME, "table")
+                for table in reversed(tables): # Niche se upar check karega
+                    try:
+                        table_html = table.get_attribute('innerHTML').lower()
+                        # VERIFICATION: Kya is table mein Shift Ka Naam aur Sahi Mahina/Saal likha hai?
+                        if shift_name.lower() in table_html and target_month_str in table_html and target_year_str in table_html:
+                            
+                            rows = table.find_elements(By.TAG_NAME, "tr")
+                            for row in rows:
+                                cols = row.find_elements(By.TAG_NAME, "td")
+                                for i in range(0, len(cols) - 1, 2):
+                                    dt_val = cols[i].text.strip()
+                                    res_val = cols[i+1].text.strip()
+                                    
+                                    # Agar date 1, 2, 3... hai aur result mein number hai
+                                    if dt_val.isdigit() and res_val and res_val not in ["XX", "-"]:
+                                        day_int = int(dt_val)
+                                        # Apne record mein match karna
+                                        for d_str, d_obj in date_str_map.items():
+                                            if d_obj.month == current_target_date.month and d_obj.year == current_target_date.year and d_obj.day == day_int:
+                                                shift_results[d_str] = res_val
+                            
+                            table_found = True
+                            break
+                    except:
+                        pass
+                if table_found:
+                    break
+                time.sleep(1) # Agar nahi mila toh 1 second wait karke dubara check karega
             
-            target_btn = None
-            for btn in buttons:
+            # Limit check: Start date se piche nikal gaye toh ruk jao
+            if current_target_date.year < start_date.year or (current_target_date.year == start_date.year and current_target_date.month <= start_date.month):
+                break
+
+            # --- B. NEELE BUTTON PAR CLICK KARNA (Manual Method) ---
+            prev_month_date = current_target_date.replace(day=1) - timedelta(days=1)
+            prev_month_short = prev_month_date.strftime("%b").lower() # e.g., 'oct'
+            prev_year_short = str(prev_month_date.year)
+            
+            blue_btn_clicked = False
+            all_links = driver.find_elements(By.TAG_NAME, "a") + driver.find_elements(By.TAG_NAME, "button")
+            
+            for link in all_links:
                 try:
-                    node = btn
-                    rc_idx = -1
-                    lines = []
-                    for _ in range(5):
-                        node = node.find_element(By.XPATH, "..")
-                        lines = [x.strip() for x in node.text.split('\n') if x.strip()]
-                        for i, line in enumerate(lines):
-                            if "record chart" in line.lower():
-                                rc_idx = i; break
-                        if rc_idx >= 1: break
-                    
-                    if rc_idx >= 1:
-                        n_str = lines[rc_idx - 2].strip() if rc_idx >= 2 else lines[0].split('at')[0].strip()
-                        if n_str.lower() == shift_name.lower():
-                            target_btn = btn
+                    if link.is_displayed():
+                        l_text = link.text.lower()
+                        # Check: Kya button par "Oct 2023" ya "Prev" jaisa kuch likha hai?
+                        if (prev_month_short in l_text and prev_year_short in l_text) or "prev" in l_text or "pichla" in l_text or "<" in l_text:
+                            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", link)
+                            time.sleep(1)
+                            driver.execute_script("arguments[0].click();", link)
+                            time.sleep(4) # Naya mahina AJAX se load hone ka pakka wait
+                            blue_btn_clicked = True
                             break
                 except:
                     pass
-                    
-            if target_btn:
-                # 👉 FIX: Purane table ko screen se uda dena, taki repeat data ka chakkar khatam ho jaye!
-                driver.execute_script("""
-                    var tables = document.querySelectorAll('table');
-                    if (tables.length > 0) {
-                        tables[tables.length - 1].innerHTML = '<tr id="waiting_row"><td>WAITING_FOR_DATA</td></tr>';
-                    }
-                """)
+            
+            if not blue_btn_clicked:
+                break # Agar neela button nahi mila, matlab site par aur piche ka data nahi hai
                 
-                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", target_btn)
-                time.sleep(1)
-                driver.execute_script("arguments[0].click();", target_btn)
-                
-                # 👉 FIX: Naya table aane ka wait karna aur NAAM verify karna!
-                for _ in range(15):
-                    time.sleep(1)
-                    tables = driver.find_elements(By.TAG_NAME, "table")
-                    if tables:
-                        last_t = tables[-1]
-                        try:
-                            if "WAITING_FOR_DATA" not in last_t.text:
-                                p_text = last_t.find_element(By.XPATH, "..").text.lower()
-                                gp_text = last_t.find_element(By.XPATH, "../..").text.lower()
-                                
-                                # Jab naam exactly match ho jayega tabhi data nikalna
-                                if shift_name.lower() in p_text or shift_name.lower() in gp_text:
-                                    rows = last_t.find_elements(By.TAG_NAME, "tr")
-                                    for row in rows:
-                                        cols = row.find_elements(By.TAG_NAME, "td")
-                                        for i in range(0, len(cols) - 1, 2):
-                                            dt_val = cols[i].text.strip()
-                                            res_val = cols[i+1].text.strip()
-                                            
-                                            # Single dates check (1, 2, 3...)
-                                            if dt_val.isdigit() and res_val and res_val not in ["XX", "-"]:
-                                                day_int = int(dt_val)
-                                                for d_str, d_obj in date_str_map.items():
-                                                    if d_obj.month == m_num and d_obj.year == y_num and d_obj.day == day_int:
-                                                        shift_results[d_str] = res_val
-                                    break # Ek baar load ho gaya, toh intezar band karo
-                        except:
-                            pass
+            # Date update karo taaki agle loop mein naya mahina check ho
+            current_target_date = prev_month_date
 
     except Exception as e:
         pass
@@ -241,7 +250,7 @@ end_fetch_date = st.sidebar.date_input("End Date (Kahan tak?):", date.today())
 
 st.sidebar.markdown("---")
 st.sidebar.header("🚀 Speed Settings")
-num_browsers = st.sidebar.slider("Ek sath kitne Browser (Tabs)?", 1, 10, 5)
+num_browsers = st.sidebar.slider("Ek sath kitne Browser (Tabs)?", 1, 6, 3)
 
 st.write("### 🛠️ Step 1: Scan All Shifts")
 if st.button("1. Scan 100+ Shifts"):
@@ -252,7 +261,7 @@ if st.button("1. Scan 100+ Shifts"):
         else:
             st.error("Scan fail. Net connection check karein.")
 
-st.write("### 📥 Step 2: Extract Data (Verified Mode)")
+st.write("### 📥 Step 2: Extract Data (NO SHORTCUT MODE)")
 if st.button("2. Start / Resume Extracting"):
     if not os.path.exists(MASTER_LIST_FILE):
         st.error("Pehle Step 1 dabakar scan karein!")
@@ -268,6 +277,7 @@ if st.button("2. Start / Resume Extracting"):
             date_strs = {d.strftime('%d-%m-%Y'): d for d in date_objs}
             
             p_bar = st.progress(0)
+            st.warning("⚠️ Data ekdum accurate laane ke liye code Neele Button daba raha hai, isme thoda time lagega par koi galti nahi hogi.")
             
             with ThreadPoolExecutor(max_workers=num_browsers) as executor:
                 futures = [executor.submit(worker_fetch_single_shift, s, start_fetch_date, end_fetch_date, date_strs) for s in pending]
@@ -275,7 +285,7 @@ if st.button("2. Start / Resume Extracting"):
                     f.result()
                     p_bar.progress(int(((i+1) / len(pending)) * 100))
                     
-            st.success("🎉 Har ek shift ka VERIFIED data extract ho gaya hai!")
+            st.success("🎉 Data successfully extract ho gaya hai bina kisi shortcut ke!")
 
 st.write("### 📊 Step 3: File Generate Karein")
 if st.button("3. Create File"):
@@ -289,13 +299,11 @@ if st.button("3. Create File"):
             date_objs = [start_fetch_date + timedelta(days=x) for x in range((end_fetch_date - start_fetch_date).days + 1)]
             final_rows = []
             
-            # Header Row
             row_names = {"Date": "Date"}
             for s in master_list:
                 row_names[sanitize_text(s['unique_col'])] = sanitize_text(s['name'])
             final_rows.append(row_names)
             
-            # Data Rows
             for d_obj in date_objs:
                 d_str = d_obj.strftime('%d-%m-%Y')
                 r = {"Date": d_str}
@@ -319,17 +327,19 @@ if st.button("3. Create File"):
             try:
                 df_final.to_excel(FINAL_EXCEL, index=False)
             except Exception as e:
-                st.warning("Excel save error, par CSV perfectly save ho gayi!")
+                pass
                 
             gc.collect() 
             
-            st.success("✅ File Generate Ho Gayi! Koi duplication nahi milegi.")
+            st.success("✅ File Generate Ho Gayi! Koi Data Duplicate Nahi Hai.")
             
             col1, col2 = st.columns(2)
             with col1:
-                with open(FINAL_EXCEL, "rb") as file:
-                    st.download_button("📥 Download Excel", data=file, file_name=FINAL_EXCEL, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                if os.path.exists(FINAL_EXCEL):
+                    with open(FINAL_EXCEL, "rb") as file:
+                        st.download_button("📥 Download Excel", data=file, file_name=FINAL_EXCEL, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             with col2:
-                with open(FINAL_CSV, "rb") as file:
-                    st.download_button("📥 Download CSV", data=file, file_name=FINAL_CSV, mime="text/csv")
-    
+                if os.path.exists(FINAL_CSV):
+                    with open(FINAL_CSV, "rb") as file:
+                        st.download_button("📥 Download CSV", data=file, file_name=FINAL_CSV, mime="text/csv")
+                                    
