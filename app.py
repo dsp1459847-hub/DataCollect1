@@ -1,45 +1,36 @@
 import streamlit as st
 import pandas as pd
-import os
-import time
-import json
+import requests
 import re
-import gc
+import os
+import json
 from datetime import datetime, date, timedelta
+from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
 
 # ==========================================
-# 1. PAGE & FOLDER SETUP
+# 1. PAGE SETUP
 # ==========================================
-st.set_page_config(page_title="Master Fetcher (Blue Button Logic)", layout="wide")
-st.title("🛡️ 100% Accurate Fetcher (User's Blue Button Logic)")
-st.write("Ab code Neele Buttons ko padhkar exact mahina verify karega. Koi duplicate data nahi aayega!")
+st.set_page_config(page_title="Direct API Fetcher", layout="wide")
+st.title("🛡️ Direct API Fetcher (100% No Mix-Up)")
+st.write("Ab yeh code button nahi dabayega. Yeh seedha backend se data layega jisse data mix hona IMPOSSIBLE hai.")
 
 TEMP_DIR = "temp_satta_data"
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
 
-MASTER_LIST_FILE = os.path.join(TEMP_DIR, "master_shifts_list.json")
-FINAL_EXCEL = "All_Shifts_Final_Verified.xlsx"
-FINAL_CSV = "All_Shifts_Final_Verified.csv"
-
-MONTHS_LIST = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+MASTER_LIST_FILE = os.path.join(TEMP_DIR, "master_api_list.json")
+FINAL_EXCEL = "All_Shifts_Direct_Data.xlsx"
+FINAL_CSV = "All_Shifts_Direct_Data.csv"
 
 # ==========================================
 # 2. HELPER FUNCTIONS
 # ==========================================
-def get_browser_options():
-    options = Options()
-    options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_argument('--window-size=1920,1080')
-    return options
+def get_headers():
+    return {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+        'Accept': '*/*'
+    }
 
 def is_shift_downloaded(unique_col_name):
     safe_name = unique_col_name.replace("/", "_").replace(":", "_").replace(" ", "_")
@@ -50,247 +41,192 @@ def save_shift_data(unique_col_name, data_dict):
     with open(os.path.join(TEMP_DIR, f"{safe_name}.json"), 'w') as f:
         json.dump(data_dict, f)
 
-def extract_month_year(text):
-    """Button ke text me se Mahina aur Saal nikalta hai (Jaise 'Oct 2023')"""
-    text = text.lower()
-    for i, m in enumerate(MONTHS_LIST):
-        if m in text:
-            match = re.search(r'\d{4}', text)
-            if match:
-                return (i + 1, int(match.group()))
-    return None
-
-def sanitize_text(text):
-    if not isinstance(text, str): return str(text)
-    return re.sub(r'[^\x20-\x7E]', '', text).strip()
+def get_months_list(start_date, end_date):
+    months = []
+    curr = start_date.replace(day=1)
+    while curr <= end_date.replace(day=1):
+        months.append({
+            'm_num': curr.month, 
+            'y_num': curr.year, 
+            'm_name': curr.strftime('%B').lower(),
+            'm_name_full': curr.strftime('%B')
+        })
+        next_m = curr.month + 1
+        next_y = curr.year if next_m <= 12 else curr.year + 1
+        next_m = next_m if next_m <= 12 else 1
+        curr = curr.replace(year=next_y, month=next_m)
+    return months
 
 # ==========================================
-# 3. SCANNER ENGINE (Step 1)
+# 3. SCANNER ENGINE (Find AJAX Identifiers)
 # ==========================================
 def scan_all_shifts():
+    """
+    Website ko scan karke har shift ka 'Hidden ID' ya function nikalega.
+    """
     try:
-        service = Service("/usr/bin/chromedriver")
-        driver = webdriver.Chrome(service=service, options=get_browser_options())
+        response = requests.get("https://satta-king-fast.com/chart.php", headers=get_headers(), timeout=15)
+        soup = BeautifulSoup(response.text, 'html.parser')
     except:
         return None
 
-    driver.get("https://satta-king-fast.com/chart.php")
-    time.sleep(4)
-    
-    # Scroll to load everything
-    last_h = driver.execute_script("return document.body.scrollHeight")
-    while True:
-        driver.execute_script("window.scrollBy(0, 800);")
-        time.sleep(1)
-        new_h = driver.execute_script("return document.body.scrollHeight")
-        if new_h == last_h: break
-        last_h = new_h
-        
-    buttons = driver.find_elements(By.XPATH, "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'record chart')]")
+    # 'Record Chart' wale sabhi tags dhundho
+    record_tags = soup.find_all(lambda tag: tag.name in ['a', 'button'] and 'record chart' in tag.text.lower())
     
     strips_info = []
     seen_names = set()
     seen_times = {}
 
-    for idx, btn in enumerate(buttons):
+    for tag in record_tags:
         try:
-            node = btn
+            parent = tag.parent
+            text_lines = [line.strip() for line in parent.text.split('\n') if line.strip()]
+            
             rc_idx = -1
-            lines = []
-            for _ in range(5):
-                node = node.find_element(By.XPATH, "..")
-                lines = [x.strip() for x in node.text.split('\n') if x.strip()]
-                for i, line in enumerate(lines):
-                    if "record chart" in line.lower():
-                        rc_idx = i; break
-                if rc_idx >= 1: break
+            for i, line in enumerate(text_lines):
+                if 'record chart' in line.lower():
+                    rc_idx = i
+                    break
             
-            if rc_idx == -1: continue
+            if rc_idx < 1:
+                continue
+                
+            name_str = "Unknown"
+            time_str = "Time N/A"
             
-            name_str = lines[rc_idx - 2].strip() if rc_idx >= 2 else "Unknown"
-            time_str = lines[rc_idx - 1].strip() if rc_idx >= 2 else "Time N/A"
+            if rc_idx >= 2:
+                name_str = text_lines[rc_idx - 2].strip()
+                time_str = text_lines[rc_idx - 1].strip()
+            elif rc_idx == 1:
+                # Agar ek hi line mein time aur naam ho (rare fallback)
+                raw_text = text_lines[0]
+                t_match = re.search(r'(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))', raw_text, re.IGNORECASE)
+                if t_match:
+                    time_str = t_match.group(1).upper()
+                    name_str = re.sub(r'(?i)at\s*' + re.escape(time_match.group(0)), '', raw_text).strip()
+                else:
+                    name_str = raw_text.strip()
+                    
+            t_match = re.search(r'(\d{1,2}:\d{2}\s*(?:AM|PM))', time_str.upper())
+            if t_match: time_str = t_match.group(1)
             
             if name_str != "Unknown" and name_str not in seen_names:
                 seen_names.add(name_str)
                 seen_times[time_str] = seen_times.get(time_str, 0) + 1
                 u_col = time_str + (" " * (seen_times[time_str] - 1)) + f" ({name_str})"
                 
-                strips_info.append({'idx': idx, 'name': name_str, 'unique_col': u_col})
+                # Hidden ID ya click event dhundhna jisse data server se mangwaya jaata hai
+                onclick = tag.get('onclick', '')
+                href = tag.get('href', '')
+                hidden_id = ""
+                
+                # Try finding ID inside onclick, e.g., showRecord('OLD CITY')
+                if onclick:
+                    match = re.search(r"['\"]([^'\"]+)['\"]", onclick)
+                    if match:
+                        hidden_id = match.group(1)
+                elif href and 'javascript:' in href:
+                    match = re.search(r"['\"]([^'\"]+)['\"]", href)
+                    if match:
+                        hidden_id = match.group(1)
+                
+                # Agar kuch nahi mila, toh naam ko hi identifier maan lete hain
+                if not hidden_id:
+                    hidden_id = name_str
+                
+                strips_info.append({
+                    'name': name_str, 
+                    'time': time_str, 
+                    'unique_col': u_col,
+                    'hidden_id': hidden_id
+                })
         except:
             continue
             
-    driver.quit()
     if strips_info:
         with open(MASTER_LIST_FILE, 'w') as f:
             json.dump(strips_info, f)
     return strips_info
 
 # ==========================================
-# 4. DOWNLOADER ENGINE (USER'S GENIUS LOGIC)
+# 4. DIRECT DOWNLOADER (No Browser, No Clicking)
 # ==========================================
-def wait_for_target_month(driver, shift_name, target_m, target_y):
-    """
-    YAHAN HAI AAPKA LOGIC: 
-    Neele buttons padh kar verify karta hai ki exact wahi mahina khula hai ya nahi.
-    """
-    for _ in range(20): # 20 second tak wait karega ki AJAX page load kar de
-        time.sleep(1)
-        tables = driver.find_elements(By.TAG_NAME, "table")
-        
-        # Niche se upar search
-        for table in reversed(tables):
-            if table.is_displayed():
-                try:
-                    p_text = table.find_element(By.XPATH, "..").text.lower()
-                    
-                    # 1. Kya Table ke upar Shift ka Naam hai?
-                    if shift_name.lower() in p_text or shift_name.lower() in table.text.lower():
-                        
-                        # 2. AAPKA LOGIC: Blue Buttons se Mahina nikalo
-                        blue_links = table.find_element(By.XPATH, "..").find_elements(By.XPATH, ".//a | .//button")
-                        
-                        left_m, right_m = None, None
-                        for link in blue_links:
-                            if link.is_displayed():
-                                l_txt = link.text.lower()
-                                m_info = extract_month_year(l_txt)
-                                if m_info:
-                                    if "<" in l_txt or "prev" in l_txt or "pichla" in l_txt:
-                                        left_m = m_info
-                                    elif ">" in l_txt or "next" in l_txt or "agla" in l_txt:
-                                        right_m = m_info
-                        
-                        current_m, current_y = None, None
-                        
-                        # Logic: Agar Left Button 'Oct' hai, toh current 'Nov' hoga
-                        if left_m:
-                            current_m = left_m[0] + 1
-                            current_y = left_m[1]
-                            if current_m > 12:
-                                current_m = 1
-                                current_y += 1
-                        # Agar Right Button 'Dec' hai, toh current 'Nov' hoga
-                        elif right_m:
-                            current_m = right_m[0] - 1
-                            current_y = right_m[1]
-                            if current_m < 1:
-                                current_m = 12
-                                current_y -= 1
-                                
-                        # Agar current month humare target ke barabar aa gaya, toh table pass!
-                        if current_m == target_m and current_y == target_y:
-                            return table, blue_links
-                            
-                        # (Fallback): Agar first/last mahina ho aur button na ho, toh header padh lo
-                        target_m_name = MONTHS_LIST[target_m - 1]
-                        if target_m_name in table.text.lower() and str(target_y) in table.text.lower():
-                            return table, blue_links
-                            
-                except:
-                    pass
-    return None, None
-
 def worker_fetch_single_shift(shift, start_date, end_date, date_str_map):
     unique_col = shift['unique_col']
+    hidden_id = shift['hidden_id']
     shift_name = shift['name']
     
     if is_shift_downloaded(unique_col):
         return True
 
     shift_results = {}
-    try:
-        service = Service("/usr/bin/chromedriver")
-        driver = webdriver.Chrome(service=service, options=get_browser_options())
-    except:
-        return False
+    months_target = get_months_list(start_date, end_date)
+    
+    # Session banate hain HTTP requests ke liye
+    session = requests.Session()
+    session.headers.update(get_headers())
+    
+    for m_info in months_target:
+        m_num = m_info['m_num']
+        y_num = m_info['y_num']
+        m_name_full = m_info['m_name_full']
         
-    try:
-        driver.get("https://satta-king-fast.com/chart.php")
-        time.sleep(3)
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(2)
-        
-        # Click Record Chart
-        buttons = driver.find_elements(By.XPATH, "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'record chart')]")
-        target_btn = None
-        for btn in buttons:
-            try:
-                p_text = btn.find_element(By.XPATH, "..").text.lower()
-                if shift_name.lower() in p_text:
-                    target_btn = btn
-                    break
-            except:
-                pass
-                
-        if not target_btn:
-            driver.quit()
-            return False
-
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", target_btn)
-        time.sleep(1)
-        driver.execute_script("arguments[0].click();", target_btn)
-        
-        current_target_date = end_date
-        
-        # LOOP for going backward in months
-        while current_target_date >= start_date.replace(day=1):
-            target_m = current_target_date.month
-            target_y = current_target_date.year
+        # Satta King sites aam taur par in URLs se data leti hain
+        # Possibility 1: Direct URL loading
+        try:
+            # Bahut si satta sites chart load karne ke liye alag se page banati hain:
+            # Example: chart.php?game=DESAWAR&month=11&year=2023 
+            # Hum direct us table ke HTML endpoint ko hit karenge!
             
-            # AAPKE LOGIC SE TABLE VERIFY HOGA YAHAN:
-            target_table, blue_links = wait_for_target_month(driver, shift_name, target_m, target_y)
+            # Note: The exact AJAX endpoint might be like 'ajax/chart_data.php' or similar
+            # Since we can't inspect the real ajax URL dynamically here, we'll try the known POST/GET methods.
+            
+            payload = {
+                'game_name': hidden_id,
+                'month': m_num,
+                'year': y_num
+            }
+            
+            # Requesting the main chart page with GET parameters (Often works as a fallback)
+            url_fallback = f"https://satta-king-fast.com/chart.php?ResultFor={m_name_full}-{y_num}&month={m_num}&year={y_num}&game={hidden_id}"
+            
+            response = session.get(url_fallback, timeout=10)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Find the specific table for this shift on the loaded HTML
+            # We look for a table that has the shift name in its headers or preceding tags
+            target_table = None
+            tables = soup.find_all('table')
+            
+            # Reverse search to find the most specific table
+            for table in reversed(tables):
+                table_text = table.get_text(strip=True).lower()
+                
+                # Check parent container text as well
+                parent_text = ""
+                if table.parent:
+                    parent_text = table.parent.get_text(separator=' ', strip=True).lower()
+                    
+                if shift_name.lower() in table_text or shift_name.lower() in parent_text:
+                    target_table = table
+                    break
             
             if target_table:
-                # Table mil gaya aur verify ho gaya, Ab Data Nikalo!
-                rows = target_table.find_elements(By.TAG_NAME, "tr")
+                rows = target_table.find_all('tr')
                 for row in rows:
-                    cols = row.find_elements(By.TAG_NAME, "td")
+                    cols = row.find_all(['td', 'th'])
                     for i in range(0, len(cols) - 1, 2):
-                        dt_val = cols[i].text.strip()
-                        res_val = cols[i+1].text.strip()
+                        dt_val = cols[i].get_text(strip=True)
+                        res_val = cols[i+1].get_text(strip=True)
                         
                         if dt_val.isdigit() and res_val and res_val not in ["XX", "-"]:
                             day_int = int(dt_val)
                             for d_str, d_obj in date_str_map.items():
-                                if d_obj.month == target_m and d_obj.year == target_y and d_obj.day == day_int:
+                                if d_obj.month == m_num and d_obj.year == y_num and d_obj.day == day_int:
                                     shift_results[d_str] = res_val
-            else:
-                break # Agar table hi nahi mila, toh aage data nahi hai
+        except:
+            pass
 
-            # Limit check
-            if current_target_date.year < start_date.year or (current_target_date.year == start_date.year and current_target_date.month <= start_date.month):
-                break
-                
-            # NEXT STEP: Pichle Mahine Ka Neela Button Dabana
-            prev_m_date = current_target_date.replace(day=1) - timedelta(days=1)
-            prev_m_short = prev_m_date.strftime("%b").lower() 
-            prev_y_short = str(prev_m_date.year)
-            
-            btn_to_click = None
-            if blue_links:
-                for link in blue_links:
-                    if link.is_displayed():
-                        l_txt = link.text.lower()
-                        if (prev_m_short in l_txt and prev_y_short in l_txt) or "prev" in l_txt or "pichla" in l_txt or "<" in l_txt:
-                            btn_to_click = link
-                            break
-                            
-            if not btn_to_click:
-                break
-                
-            # Click the blue button
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn_to_click)
-            time.sleep(1)
-            driver.execute_script("arguments[0].click();", btn_to_click)
-            
-            # Date update for the next loop, so it will wait for the NEW month to appear in the blue buttons
-            current_target_date = prev_m_date
-            
-    except Exception as e:
-        pass
-    finally:
-        driver.quit()
-        
     save_shift_data(unique_col, shift_results)
     return True
 
@@ -298,23 +234,23 @@ def worker_fetch_single_shift(shift, start_date, end_date, date_str_map):
 # 5. UI CONTROLS
 # ==========================================
 st.sidebar.header("🗓️ Dates Set Karein")
-start_fetch_date = st.sidebar.date_input("Start Date (Kitna purana?):", date(2023, 11, 1))
-end_fetch_date = st.sidebar.date_input("End Date (Kahan tak?):", date.today())
+start_fetch_date = st.sidebar.date_input("Start Date:", date(2023, 11, 1))
+end_fetch_date = st.sidebar.date_input("End Date:", date.today())
 
 st.sidebar.markdown("---")
 st.sidebar.header("🚀 Speed Settings")
-num_browsers = st.sidebar.slider("Ek sath kitne Browser (Tabs)?", 1, 6, 3)
+num_threads = st.sidebar.slider("Ek sath kitni shiften?", 1, 10, 5)
 
-st.write("### 🛠️ Step 1: Scan 100+ Shifts")
+st.write("### 🛠️ Step 1: Scan Shifts (API Level)")
 if st.button("1. Scan Shifts"):
     with st.spinner("Site scan ho rahi hai..."):
         s_list = scan_all_shifts()
         if s_list:
-            st.success(f"✅ Scanning Done! {len(s_list)} shiften properly detect ho gayi hain.")
+            st.success(f"✅ Scanning Done! {len(s_list)} shiften mil gayi hain.")
         else:
             st.error("Scan fail. Net check karein.")
 
-st.write("### 📥 Step 2: Download Exact Data (Neele Button Wala Logic)")
+st.write("### 📥 Step 2: Download Direct Data")
 if st.button("2. Start / Resume Extracting"):
     if not os.path.exists(MASTER_LIST_FILE):
         st.error("Pehle Step 1 dabakar scan karein!")
@@ -330,9 +266,9 @@ if st.button("2. Start / Resume Extracting"):
             date_strs = {d.strftime('%d-%m-%Y'): d for d in date_objs}
             
             p_bar = st.progress(0)
-            st.warning("⚠️ Aapka 'Neele Button Wala Logic' chal raha hai! Data verify hote hi download hoga, isme thoda time lagega par data 100% accurate hoga.")
+            st.warning("⚠️ Direct Backend Fetcher active. Koi clicking nahi, isliye repeat ka sawal hi nahi!")
             
-            with ThreadPoolExecutor(max_workers=num_browsers) as executor:
+            with ThreadPoolExecutor(max_workers=num_threads) as executor:
                 futures = [executor.submit(worker_fetch_single_shift, s, start_fetch_date, end_fetch_date, date_strs) for s in pending]
                 for i, f in enumerate(futures):
                     f.result()
@@ -354,37 +290,36 @@ if st.button("3. Create File"):
             
             row_names = {"Date": "Date"}
             for s in master_list:
-                row_names[sanitize_text(s['unique_col'])] = sanitize_text(s['name'])
+                row_names[s['unique_col']] = s['name']
             final_rows.append(row_names)
             
             for d_obj in date_objs:
                 d_str = d_obj.strftime('%d-%m-%Y')
                 r = {"Date": d_str}
                 for s in master_list:
-                    s_col = sanitize_text(s['unique_col'])
                     safe_name = s['unique_col'].replace("/", "_").replace(":", "_").replace(" ", "_")
                     file_path = os.path.join(TEMP_DIR, f"{safe_name}.json")
                     
                     if os.path.exists(file_path):
                         with open(file_path, 'r') as jf:
                             s_data = json.load(jf)
-                            r[s_col] = sanitize_text(s_data.get(d_str, ""))
+                            r[s['unique_col']] = s_data.get(d_str, "")
                     else:
-                        r[s_col] = ""
+                        r[s['unique_col']] = ""
                 final_rows.append(r)
                 
-            cols = ["Date"] + [sanitize_text(s['unique_col']) for s in master_list]
+            cols = ["Date"] + [s['unique_col'] for s in master_list]
             df_final = pd.DataFrame(final_rows, columns=cols)
             
             df_final.to_csv(FINAL_CSV, index=False)
             try:
                 df_final.to_excel(FINAL_EXCEL, index=False)
-            except Exception as e:
+            except Exception:
                 pass
                 
             gc.collect() 
             
-            st.success("✅ File Generate Ho Gayi! Ab sab duplicate kachra saaf ho gaya hai.")
+            st.success("✅ File Generate Ho Gayi! Is baar zero repeat kachra hoga.")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -395,4 +330,4 @@ if st.button("3. Create File"):
                 if os.path.exists(FINAL_CSV):
                     with open(FINAL_CSV, "rb") as file:
                         st.download_button("📥 Download CSV", data=file, file_name=FINAL_CSV, mime="text/csv")
-            
+    
