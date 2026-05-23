@@ -41,6 +41,18 @@ def safe_window_default(n):
     valid = [x for x in options if x <= n]
     return max(valid) if valid else 1
 
+def add_accuracy(df_rows):
+    out = []
+    for r in df_rows:
+        p = int(r.get("PASS", 0))
+        f = int(r.get("FAIL", 0))
+        total = p + f
+        acc = round((p / total) * 100, 2) if total > 0 else 0.0
+        rr = dict(r)
+        rr["ACCURACY %"] = acc
+        out.append(rr)
+    return pd.DataFrame(out)
+
 def build_all_history(df_part, shifts):
     success_history = []
     backtest_rows = []
@@ -72,7 +84,6 @@ def build_all_history(df_part, shifts):
         row = {"DATE": cur["DATE"].date()}
         pass_count = 0
         fail_count = 0
-
         for sh in SHIFT_ORDER:
             if sh in shifts and pd.notna(cur[sh]):
                 val = int(cur[sh])
@@ -82,14 +93,13 @@ def build_all_history(df_part, shifts):
                 fail_count += 0 if hit else 1
             else:
                 row[sh] = ""
-
         row["PASS"] = pass_count
         row["FAIL"] = fail_count
         backtest_rows.append(row)
 
-    return success_history, backtest_rows, seq_counter
+    return success_history, add_accuracy(backtest_rows), seq_counter
 
-def build_shift_history(df_part, shift):
+def build_shift_history(df_part, shift, available_shifts):
     success_history = []
     rows = []
     seq_counter = Counter()
@@ -99,7 +109,7 @@ def build_shift_history(df_part, shift):
         nxt = df_part.iloc[i + 1]
 
         cur_val_s = pd.to_numeric(pd.Series([cur[shift]]), errors='coerce').dropna()
-        nxt_vals = pd.to_numeric(nxt[SHIFT_ORDER], errors='coerce').dropna().astype(int).tolist()
+        nxt_vals = pd.to_numeric(nxt.reindex(available_shifts), errors='coerce').dropna().astype(int).tolist()
         nxt_set = set(nxt_vals)
 
         if len(cur_val_s) == 0:
@@ -121,35 +131,13 @@ def build_shift_history(df_part, shift):
             "DATE": cur["DATE"].date(),
             shift: f"{val} ✅" if has_hit(val, nxt_set) else f"{val} ❌",
             "PASS": 1 if has_hit(val, nxt_set) else 0,
-            "FAIL": 0 if has_hit(val, nxt_set) else 1
+            "FAIL": 0 if hit else 1
         })
 
-    return success_history, rows, seq_counter
+    return success_history, add_accuracy(rows), seq_counter
 
-def render_accuracy_table(rows, shift_name=None):
-    acc_rows = []
-    for r in rows:
-        if shift_name:
-            val = r.get(shift_name, "")
-            hit = "✅" in str(val)
-            acc_rows.append({
-                "DATE": r["DATE"],
-                "PASS": 1 if hit else 0,
-                "FAIL": 0 if hit else 1,
-                "ACCURACY %": 100.0 if hit else 0.0
-            })
-        else:
-            p = int(r.get("PASS", 0))
-            f = int(r.get("FAIL", 0))
-            total = p + f
-            acc = round((p / total) * 100, 2) if total > 0 else 0.0
-            acc_rows.append({
-                "DATE": r["DATE"],
-                "PASS": p,
-                "FAIL": f,
-                "ACCURACY %": acc
-            })
-    st.dataframe(pd.DataFrame(acc_rows), use_container_width=True, height=260)
+def render_table(df_table):
+    st.dataframe(df_table, use_container_width=True, height=520)
 
 uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'])
 
@@ -212,15 +200,9 @@ if len(df_range) < 2:
     st.error("Selected range में पर्याप्त data नहीं है.")
     st.stop()
 
-history_snapshot = df_range.tail(history_limit).copy().reset_index(drop=True)
-
 def render_all_code():
     st.header("📊 All Code Analysis")
-    success_history, backtest_rows, seq_counter = build_all_history(df_range, shifts_present)
-
-    if not success_history:
-        st.warning("Not enough data for combined analysis.")
-        return
+    success_history, backtest_df, seq_counter = build_all_history(df_range, shifts_present)
 
     window_options = [1, 3, 7, 10, 15, 30, 45]
     default_window = safe_window_default(len(success_history))
@@ -236,42 +218,21 @@ def render_all_code():
     if len(top_3) > 1: c2.metric("🥈 Second Best", str(top_3[1][0]), f"{top_3[1][1]} Hits")
     if len(top_3) > 2: c3.metric("🥉 Third Best", str(top_3[2][0]), f"{top_3[2][1]} Hits")
 
-    st.divider()
-    st.subheader("📅 Today / Selected Date Snapshot")
-    st.write(f"Selected Date: {prediction_date}")
-    st.dataframe(history_snapshot.tail(1)[['DATE'] + shifts_present], use_container_width=True, height=120)
-
-    st.divider()
     st.subheader("✅ Backtest History")
-    st.dataframe(pd.DataFrame(backtest_rows), use_container_width=True, height=520)
+    render_table(backtest_df)
 
-    st.divider()
     st.subheader("🔮 Final Prediction")
     last_ps = success_history[-1]
     seq_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
     final_unique = list(dict.fromkeys(seq_preds))[:10]
-
-    pred_table = pd.DataFrame({
-        "Date": [end_date] * len(final_unique),
-        "Pattern": final_unique,
-        "Generated Number": final_unique
-    })
+    pred_table = pd.DataFrame({"Date": [end_date] * len(final_unique), "Pattern": final_unique, "Generated Number": final_unique})
     st.dataframe(pred_table, use_container_width=True, height=260)
-    st.success(f"Final predicted numbers: {final_unique}")
-
-    st.divider()
-    st.subheader("📋 Historical Backtest Accuracy")
-    render_accuracy_table(backtest_rows, None)
 
 def render_shift_wise():
     st.header("📊 Shift Wise Analysis")
     selected_shift = st.selectbox("Select Shift", shifts_present, index=0)
 
-    success_history, shift_rows, seq_counter = build_shift_history(df_range, selected_shift)
-
-    if not success_history:
-        st.warning("Not enough data for this shift.")
-        return
+    success_history, shift_df, seq_counter = build_shift_history(df_range, selected_shift, shifts_present)
 
     window_options = [1, 3, 7, 10, 15, 30, 45]
     default_window = safe_window_default(len(success_history))
@@ -287,16 +248,9 @@ def render_shift_wise():
     if len(top_3) > 1: c2.metric("🥈 Second Best", str(top_3[1][0]), f"{top_3[1][1]} Hits")
     if len(top_3) > 2: c3.metric("🥉 Third Best", str(top_3[2][0]), f"{top_3[2][1]} Hits")
 
-    st.divider()
-    st.subheader("📅 Today / Selected Date Snapshot")
-    st.write(f"Selected Date: {prediction_date}")
-    st.dataframe(history_snapshot.tail(1)[['DATE'] + shifts_present], use_container_width=True, height=120)
-
-    st.divider()
     st.subheader(f"✅ Backtest History - {selected_shift}")
-    st.dataframe(pd.DataFrame(shift_rows), use_container_width=True, height=520)
+    render_table(shift_df)
 
-    st.divider()
     st.subheader(f"🔮 Final Prediction - {selected_shift}")
     last_val_s = pd.to_numeric(pd.Series([df_range.iloc[-1][selected_shift]]), errors='coerce').dropna()
     if len(last_val_s) == 0:
@@ -306,18 +260,8 @@ def render_shift_wise():
     last_val = int(last_val_s.iloc[0])
     pred_nums = [(last_val + p) % 100 for p in MASTER_PATTERNS]
     pred_nums = list(dict.fromkeys(pred_nums))[:10]
-
-    pred_table = pd.DataFrame({
-        "Date": [end_date] * len(pred_nums),
-        "Pattern": [selected_shift] * len(pred_nums),
-        "Generated Number": pred_nums
-    })
+    pred_table = pd.DataFrame({"Date": [end_date] * len(pred_nums), "Pattern": [selected_shift] * len(pred_nums), "Generated Number": pred_nums})
     st.dataframe(pred_table, use_container_width=True, height=260)
-    st.success(f"Final predicted numbers: {pred_nums}")
-
-    st.divider()
-    st.subheader("📋 Historical Backtest Accuracy")
-    render_accuracy_table(shift_rows, selected_shift)
 
 if mode == "All Code":
     render_all_code()
