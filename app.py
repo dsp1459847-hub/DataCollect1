@@ -5,6 +5,40 @@ from itertools import combinations
 
 st.set_page_config(page_title="Jackpot Pattern AI", layout="wide")
 
+st.markdown("""
+<style>
+.big-box {
+    border: 2px solid #c9c9c9;
+    border-radius: 14px;
+    padding: 12px;
+    margin-bottom: 10px;
+    background: #fff;
+}
+.big-box-title {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+.small-box {
+    border: 1px solid #d8d8d8;
+    border-radius: 10px;
+    padding: 10px;
+    text-align: center;
+    font-weight: 700;
+    margin-bottom: 8px;
+    background: #f8f8f8;
+}
+.hit {
+    color: #0a7a0a;
+    font-weight: 700;
+}
+.miss {
+    color: #c00000;
+    font-weight: 700;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title("🏆 Monthly & Weekly Jackpot Pattern Analyzer")
 st.write("शॉर्ट-टर्म और लॉन्ग-टर्म डेटा से pattern analysis, backtest, tier matching, और prediction.")
 
@@ -169,6 +203,14 @@ def build_shift_history(df_part, shift, available_shifts):
 
     return success_history, add_accuracy(rows), pd.DataFrame(tier_rows), seq_counter
 
+def render_boxes(numbers, title):
+    st.markdown(f"<div class='big-box'><div class='big-box-title'>{title}</div>", unsafe_allow_html=True)
+    cols = st.columns(4)
+    for i, num in enumerate(numbers):
+        with cols[i % 4]:
+            st.markdown(f"<div class='small-box'>{num}</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
 def support_box(freq_map):
     top3 = freq_map.most_common(3)
     c1, c2, c3 = st.columns(3)
@@ -196,9 +238,9 @@ def tier_vs_shift_summary(seq_counter, selected_shift):
         rows.append({"Shift": selected_shift, "Tier": f"Tier {rank}", "Combo": str(combo), "Generated": num, "Hits": count})
     return pd.DataFrame(rows)
 
-def show_prediction_box(numbers, title="Prediction Box"):
+def show_prediction_grid(numbers, title="Prediction Box"):
     st.markdown(f"### 🔮 {title}")
-    st.dataframe(pd.DataFrame({"Generated Number": numbers}), use_container_width=True, height=180, hide_index=True)
+    render_boxes(numbers, title)
 
 def get_last_valid_value(df_part, col):
     tmp = df_part[['DATE', col]].copy()
@@ -291,7 +333,7 @@ def render_all_code():
         last_ps = success_history[-1]
         seq_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
         final_unique = list(dict.fromkeys(seq_preds))[:10]
-        show_prediction_box(final_unique, "Current Prediction")
+        show_prediction_grid(final_unique, "Current Prediction")
 
 def render_shift_wise():
     st.header("📊 Shift Wise Analysis")
@@ -327,8 +369,8 @@ def render_shift_wise():
 
     st.caption(f"Last valid {selected_shift}: {last_val} on {last_date}")
     pred_nums = [(last_val + p) % 100 for p in MASTER_PATTERNS]
-    pred_nums = list(dict.fromkeys(pred_nums))[:10]
-    show_prediction_box(pred_nums, "Current Shift Prediction")
+    pred_nums = list(dict.fromkeys(pred_nums))[:12]
+    show_prediction_grid(pred_nums, "Current Shift Prediction")
 
 if mode == "All Code":
     render_all_code()
