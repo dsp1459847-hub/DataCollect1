@@ -89,6 +89,43 @@ def build_all_history(df_part, shifts):
 
     return success_history, backtest_rows, seq_counter
 
+def build_shift_history(df_part, shift):
+    success_history = []
+    rows = []
+    seq_counter = Counter()
+
+    for i in range(len(df_part) - 1):
+        cur = df_part.iloc[i]
+        nxt = df_part.iloc[i + 1]
+
+        cur_val_s = pd.to_numeric(pd.Series([cur[shift]]), errors='coerce').dropna()
+        nxt_vals = pd.to_numeric(nxt[SHIFT_ORDER], errors='coerce').dropna().astype(int).tolist()
+        nxt_set = set(nxt_vals)
+
+        if len(cur_val_s) == 0:
+            success_history.append([])
+            continue
+
+        val = int(cur_val_s.iloc[0])
+        found = [p for p in MASTER_PATTERNS if (val + p) % 100 in nxt_set]
+        found = list(dict.fromkeys(found))
+        success_history.append(found)
+
+        for combo_size in [1, 2, 3]:
+            if len(found) >= combo_size:
+                for combo in combinations(sorted(found), combo_size):
+                    for n in nxt_vals:
+                        seq_counter[(combo, n)] += 1
+
+        rows.append({
+            "DATE": cur["DATE"].date(),
+            shift: f"{val} ✅" if has_hit(val, nxt_set) else f"{val} ❌",
+            "PASS": 1 if has_hit(val, nxt_set) else 0,
+            "FAIL": 0 if has_hit(val, nxt_set) else 1
+        })
+
+    return success_history, rows, seq_counter
+
 def render_accuracy_table(rows, shift_name=None):
     acc_rows = []
     for r in rows:
