@@ -14,13 +14,25 @@ shifts = ['DS', 'FD', 'GD', 'GL', 'DB', 'SG']
 uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'])
 
 if uploaded_file:
-    if uploaded_file.name.endswith('.csv'):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file, engine="openpyxl")
+    except Exception as e:
+        st.error(f"File read error: {e}")
+        st.stop()
 
     df.columns = df.columns.astype(str).str.strip().str.upper()
     shifts = [c.strip().upper() for c in shifts]
+
+    if 'DATE' not in df.columns:
+        st.error("DATE column file mein nahi mili.")
+        st.stop()
+
+    df['DATE'] = pd.to_datetime(df['DATE'], errors='coerce')
+    df = df.dropna(subset=['DATE']).copy()
+    df = df.sort_values('DATE').reset_index(drop=True)
 
     available_shifts = [c for c in shifts if c in df.columns]
     missing_shifts = [c for c in shifts if c not in df.columns]
@@ -29,16 +41,35 @@ if uploaded_file:
         st.warning(f"Missing columns: {missing_shifts}")
 
     if len(available_shifts) < 2:
-        st.error("कम से कम 2 required columns नहीं मिले। File में DS, FD, GD, GL, DB, SG जैसे columns check करें।")
+        st.error("Kam se kam 2 shift columns required hain.")
         st.stop()
 
     for col in available_shifts:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
+    st.sidebar.header("📅 Date Selection")
+    all_dates = df['DATE'].dt.date.tolist()
+
+    selected_date = st.sidebar.date_input(
+        "Select Date",
+        value=all_dates[-1],
+        min_value=all_dates[0],
+        max_value=all_dates[-1]
+    )
+
+    history_days = st.sidebar.slider("History Days", 7, 100, 30)
+    window = st.sidebar.select_slider("Select Days", options=[1, 3, 7, 10, 15, 30, 60, 90], value=30)
+
+    df_filtered = df[df['DATE'].dt.date <= selected_date].copy()
+    df_recent = df_filtered.tail(history_days).copy()
+
+    st.header(f"📊 Selected Date: {selected_date}")
+    st.write(f"Using last {len(df_recent)} rows for analysis.")
+
     success_history = []
-    for i in range(len(df) - 1):
-        today = set(df.loc[i, available_shifts].dropna().astype(int).values)
-        tomorrow = set(df.loc[i + 1, available_shifts].dropna().astype(int).values)
+    for i in range(len(df_recent) - 1):
+        today = set(df_recent.loc[i, available_shifts].dropna().astype(int).values)
+        tomorrow = set(df_recent.loc[i + 1, available_shifts].dropna().astype(int).values)
 
         if not today or not tomorrow:
             success_history.append([])
@@ -46,9 +77,6 @@ if uploaded_file:
 
         found = [p for val in today for p in master_patterns if (val + p) % 100 in tomorrow]
         success_history.append(list(set(found)))
-
-    st.sidebar.header("⏱️ विश्लेषण की अवधि")
-    window = st.sidebar.select_slider("Select Days", options=[1, 3, 7, 10, 15, 30], value=30)
 
     recent_data = success_history[-window:] if window <= len(success_history) else success_history
 
@@ -93,11 +121,11 @@ if uploaded_file:
     monthly_set = set([p for p, c in monthly_freq.most_common(10)])
     jackpot_patterns = weekly_set.intersection(monthly_set)
 
-    st.warning(f"🎯 **Jackpot Patterns (Common in Week & Month):** {list(jackpot_patterns)}")
+    st.warning(f"🎯 Jackpot Patterns (Common in Week & Month): {list(jackpot_patterns)}")
 
     st.divider()
     st.header("🔗 Sequence Chain Analysis")
-    chain_size = st.radio("Chain की गहराई चुनें:", [1, 2, 3, 4, 5], horizontal=True)
+    chain_size = st.radio("Chain की depth चुनें:", [1, 2, 3, 4, 5], horizontal=True)
 
     seq_counter = Counter()
     for i in range(len(recent_data) - 1):
@@ -108,16 +136,35 @@ if uploaded_file:
                     seq_counter[(combo, n)] += 1
 
     if seq_counter:
-        st.table([{"Current Group": k[0], "Next Likely": k[1], "Total Hits": v} for k, v in seq_counter.most_common(10)])
+        st.table([
+            {"Current Group": k[0], "Next Likely": k[1], "Total Hits": v}
+            for k, v in seq_counter.most_common(10)
+        ])
     else:
         st.write("पर्याप्त डेटा नहीं है।")
 
     st.divider()
     if success_history:
         last_ps = success_history[-1]
-        st.subheader(f"🔮 Today's Success: {last_ps}")
+        st.subheader(f"🔮 Selected-date latest success: {last_ps}")
         final_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
         if final_preds:
-            st.success(f"कल के लिए 'Jackpot' सुझाव: **{list(set(final_preds))}**")
+            st.success(f"कल के लिए 'Jackpot' सुझाव: {list(set(final_preds))}")
+
+    st.divider()
+    st.subheader("📋 Backtest Table")
+    bt_rows = []
+    for i in range(max(0, len(success_history) - 10), len(success_history)):
+        bt_rows.append({
+            "Row": i + 1,
+            "Date": str(df_recent.iloc[i]['DATE'].date()) if i < len(df_recent) else "",
+            "Patterns Found": success_history[i]
+        })
+
+    if bt_rows:
+        st.dataframe(pd.DataFrame(bt_rows), use_container_width=True)
+    else:
+        st.info("Backtest के लिए पर्याप्त data नहीं है.")
+
 else:
     st.info("Sidebar में अपनी डेटा फाइल अपलोड करें।")
