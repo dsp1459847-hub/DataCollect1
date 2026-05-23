@@ -5,12 +5,6 @@ from itertools import combinations
 
 st.set_page_config(page_title="Jackpot Pattern AI", layout="wide")
 
-st.markdown("""
-<style>
-.block-container {padding-top: 1rem; padding-bottom: 1rem;}
-</style>
-""", unsafe_allow_html=True)
-
 st.title("🏆 Monthly & Weekly Jackpot Pattern Analyzer")
 st.write("शॉर्ट-टर्म और लॉन्ग-टर्म डेटा से pattern analysis, backtest, और prediction.")
 
@@ -198,6 +192,21 @@ if len(df_range) < 2:
     st.error("Selected range में पर्याप्त data नहीं है.")
     st.stop()
 
+def show_prediction_box(numbers):
+    st.subheader("🔮 Prediction")
+    pred_df = pd.DataFrame({"Generated Number": numbers})
+    st.dataframe(pred_df, use_container_width=True, height=180, hide_index=True)
+
+def render_top_box(freq_map):
+    top_3 = freq_map.most_common(3)
+    c1, c2, c3 = st.columns(3)
+    if len(top_3) > 0:
+        c1.metric("Top 1", str(top_3[0][0]), f"{top_3[0][1]} Hits")
+    if len(top_3) > 1:
+        c2.metric("Top 2", str(top_3[1][0]), f"{top_3[1][1]} Hits")
+    if len(top_3) > 2:
+        c3.metric("Top 3", str(top_3[2][0]), f"{top_3[2][1]} Hits")
+
 def render_all_code():
     st.header("📊 All Code Analysis")
     success_history, backtest_df, seq_counter = build_all_history(df_range, shifts_present)
@@ -209,22 +218,15 @@ def render_all_code():
     recent_data = success_history[-window:] if window <= len(success_history) else success_history
     flat = [p for sub in recent_data for p in sub]
     freq_map = Counter(flat)
-    top_3 = freq_map.most_common(3)
-
-    c1, c2, c3 = st.columns(3)
-    if len(top_3) > 0: c1.metric("🥇 Top Pattern", str(top_3[0][0]), f"{top_3[0][1]} Hits")
-    if len(top_3) > 1: c2.metric("🥈 Second Best", str(top_3[1][0]), f"{top_3[1][1]} Hits")
-    if len(top_3) > 2: c3.metric("🥉 Third Best", str(top_3[2][0]), f"{top_3[2][1]} Hits")
+    render_top_box(freq_map)
 
     st.subheader("✅ Backtest History")
     st.dataframe(backtest_df, use_container_width=True, height=520)
 
-    st.subheader("🔮 Final Prediction")
     last_ps = success_history[-1]
     seq_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
     final_unique = list(dict.fromkeys(seq_preds))[:10]
-    pred_table = pd.DataFrame({"Date": [end_date] * len(final_unique), "Pattern": final_unique, "Generated Number": final_unique})
-    st.dataframe(pred_table, use_container_width=True, height=260)
+    show_prediction_box(final_unique)
 
 def render_shift_wise():
     st.header("📊 Shift Wise Analysis")
@@ -239,17 +241,11 @@ def render_shift_wise():
     recent_data = success_history[-window:] if window <= len(success_history) else success_history
     flat = [p for sub in recent_data for p in sub]
     freq_map = Counter(flat)
-    top_3 = freq_map.most_common(3)
-
-    c1, c2, c3 = st.columns(3)
-    if len(top_3) > 0: c1.metric("🥇 Top Pattern", str(top_3[0][0]), f"{top_3[0][1]} Hits")
-    if len(top_3) > 1: c2.metric("🥈 Second Best", str(top_3[1][0]), f"{top_3[1][1]} Hits")
-    if len(top_3) > 2: c3.metric("🥉 Third Best", str(top_3[2][0]), f"{top_3[2][1]} Hits")
+    render_top_box(freq_map)
 
     st.subheader(f"✅ Backtest History - {selected_shift}")
     st.dataframe(shift_df, use_container_width=True, height=520)
 
-    st.subheader(f"🔮 Final Prediction - {selected_shift}")
     last_val_s = pd.to_numeric(pd.Series([df_range.iloc[-1][selected_shift]]), errors='coerce').dropna()
     if len(last_val_s) == 0:
         st.warning("No valid latest value.")
@@ -258,8 +254,7 @@ def render_shift_wise():
     last_val = int(last_val_s.iloc[0])
     pred_nums = [(last_val + p) % 100 for p in MASTER_PATTERNS]
     pred_nums = list(dict.fromkeys(pred_nums))[:10]
-    pred_table = pd.DataFrame({"Date": [end_date] * len(pred_nums), "Pattern": [selected_shift] * len(pred_nums), "Generated Number": pred_nums})
-    st.dataframe(pred_table, use_container_width=True, height=260)
+    show_prediction_box(pred_nums)
 
 if mode == "All Code":
     render_all_code()
