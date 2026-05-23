@@ -48,34 +48,50 @@ if uploaded_file:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
     st.sidebar.header("📅 Date Selection")
-    all_dates = df['DATE'].dt.date.tolist()
+    unique_dates = sorted(df['DATE'].dt.date.unique().tolist())
 
-    selected_date = st.sidebar.date_input(
+    selected_date = st.sidebar.selectbox(
         "Select Date",
-        value=all_dates[-1],
-        min_value=all_dates[0],
-        max_value=all_dates[-1]
+        unique_dates,
+        index=len(unique_dates) - 1
     )
 
     history_days = st.sidebar.slider("History Days", 7, 100, 30)
     window = st.sidebar.select_slider("Select Days", options=[1, 3, 7, 10, 15, 30, 60, 90], value=30)
 
-    df_filtered = df[df['DATE'].dt.date <= selected_date].copy()
-    df_recent = df_filtered.tail(history_days).copy()
+    df_filtered = df[df['DATE'].dt.date <= selected_date].copy().reset_index(drop=True)
+    df_recent = df_filtered.tail(history_days).copy().reset_index(drop=True)
 
     st.header(f"📊 Selected Date: {selected_date}")
     st.write(f"Using last {len(df_recent)} rows for analysis.")
 
+    if len(df_recent) < 2:
+        st.warning("Backtest ke liye enough data nahi hai.")
+        st.stop()
+
     success_history = []
+    row_dates = []
+
     for i in range(len(df_recent) - 1):
-        today = set(df_recent.loc[i, available_shifts].dropna().astype(int).values)
-        tomorrow = set(df_recent.loc[i + 1, available_shifts].dropna().astype(int).values)
+        today_vals = pd.to_numeric(df_recent.iloc[i][available_shifts], errors='coerce').dropna()
+        tomorrow_vals = pd.to_numeric(df_recent.iloc[i + 1][available_shifts], errors='coerce').dropna()
+
+        today = set(today_vals.astype(int).tolist())
+        tomorrow = set(tomorrow_vals.astype(int).tolist())
+
+        row_dates.append(df_recent.iloc[i]['DATE'].date())
 
         if not today or not tomorrow:
             success_history.append([])
             continue
 
-        found = [p for val in today for p in master_patterns if (val + p) % 100 in tomorrow]
+        found = []
+        for val in today:
+            for p in master_patterns:
+                candidate = (val + p) % 100
+                if candidate in tomorrow:
+                    found.append(p)
+
         success_history.append(list(set(found)))
 
     recent_data = success_history[-window:] if window <= len(success_history) else success_history
@@ -157,14 +173,14 @@ if uploaded_file:
     for i in range(max(0, len(success_history) - 10), len(success_history)):
         bt_rows.append({
             "Row": i + 1,
-            "Date": str(df_recent.iloc[i]['DATE'].date()) if i < len(df_recent) else "",
+            "Date": str(row_dates[i]) if i < len(row_dates) else "",
             "Patterns Found": success_history[i]
         })
 
     if bt_rows:
         st.dataframe(pd.DataFrame(bt_rows), use_container_width=True)
     else:
-        st.info("Backtest के लिए पर्याप्त data नहीं है.")
+        st.info("Backtest ke liye पर्याप्त data नहीं है.")
 
 else:
     st.info("Sidebar में अपनी डेटा फाइल अपलोड करें।")
