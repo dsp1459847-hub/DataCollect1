@@ -78,7 +78,6 @@ def build_all_history(df_part, shifts):
         row = {"DATE": cur["DATE"].date()}
         pass_count = 0
         fail_count = 0
-
         for sh in SHIFT_ORDER:
             if sh in shifts and pd.notna(cur[sh]):
                 val = int(cur[sh])
@@ -88,7 +87,6 @@ def build_all_history(df_part, shifts):
                 fail_count += 0 if hit else 1
             else:
                 row[sh] = ""
-
         row["PASS"] = pass_count
         row["FAIL"] = fail_count
         backtest_rows.append(row)
@@ -183,9 +181,18 @@ def tier_vs_shift_summary(seq_counter, selected_shift):
         })
     return pd.DataFrame(rows)
 
-def show_prediction_box(numbers):
-    st.markdown("### 🔮 Prediction Box")
+def show_prediction_box(numbers, title="Prediction Box"):
+    st.markdown(f"### 🔮 {title}")
     st.dataframe(pd.DataFrame({"Generated Number": numbers}), use_container_width=True, height=180, hide_index=True)
+
+def get_last_valid_value(df_part, col):
+    tmp = df_part[['DATE', col]].copy()
+    tmp[col] = pd.to_numeric(tmp[col], errors='coerce')
+    tmp = tmp.dropna(subset=[col])
+    if len(tmp) == 0:
+        return None, None
+    last_row = tmp.iloc[-1]
+    return int(last_row[col]), last_row['DATE'].date()
 
 uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'])
 
@@ -274,7 +281,7 @@ def render_all_code():
     last_ps = success_history[-1]
     seq_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
     final_unique = list(dict.fromkeys(seq_preds))[:10]
-    show_prediction_box(final_unique)
+    show_prediction_box(final_unique, "Current Prediction")
 
 def render_shift_wise():
     st.header("📊 Shift Wise Analysis")
@@ -304,15 +311,15 @@ def render_shift_wise():
     st.markdown("### Which Tier Passes More")
     st.dataframe(tier_vs_shift_summary(seq_counter, selected_shift), use_container_width=True, height=220, hide_index=True)
 
-    last_val_s = pd.to_numeric(pd.Series([df_range.iloc[-1][selected_shift]]), errors='coerce').dropna()
-    if len(last_val_s) == 0:
+    last_val, last_date = get_last_valid_value(df_range, selected_shift)
+    if last_val is None:
         st.warning("No valid latest value.")
         return
 
-    last_val = int(last_val_s.iloc[0])
+    st.caption(f"Last valid {selected_shift}: {last_val} on {last_date}")
     pred_nums = [(last_val + p) % 100 for p in MASTER_PATTERNS]
     pred_nums = list(dict.fromkeys(pred_nums))[:10]
-    show_prediction_box(pred_nums)
+    show_prediction_box(pred_nums, "Current Shift Prediction")
 
 if mode == "All Code":
     render_all_code()
