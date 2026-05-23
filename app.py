@@ -12,10 +12,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏆 Monthly & Weekly Jackpot Pattern Analyzer")
-st.write("शॉर्ट-टर्म (Weekly) और लॉन्ग-टर्म (Monthly) डेटा का उपयोग करके pattern analysis, backtest, और prediction.")
+st.write("शॉर्ट-टर्म और लॉन्ग-टर्म डेटा से pattern analysis, backtest, और prediction.")
 
 MASTER_PATTERNS = [0, -18, -16, -26, -32, -1, -4, -11, -15, -10, -51, -50, 15, 5, -5, -55, 1, 10, 11, 51, 55, -40]
-SHIFT_ORDER = ['DS', 'FD', 'GD', 'GL', 'DB', 'SG']
+SHIFT_ORDER = ['DS', 'DB', 'SG', 'FD', 'GB', 'GL']
 
 def clean_df(uploaded_file):
     if uploaded_file.name.endswith('.csv'):
@@ -37,7 +37,7 @@ def has_hit(val, nxt_vals):
     return any(((val + p) % 100) in nxt_vals for p in MASTER_PATTERNS)
 
 def safe_window_default(n):
-    options = [1, 3, 7, 10, 15, 30, 60, 90]
+    options = [1, 3, 7, 10, 15, 30, 45]
     valid = [x for x in options if x <= n]
     return max(valid) if valid else 1
 
@@ -72,6 +72,7 @@ def build_all_history(df_part, shifts):
         row = {"DATE": cur["DATE"].date()}
         pass_count = 0
         fail_count = 0
+
         for sh in SHIFT_ORDER:
             if sh in shifts and pd.notna(cur[sh]):
                 val = int(cur[sh])
@@ -81,51 +82,37 @@ def build_all_history(df_part, shifts):
                 fail_count += 0 if hit else 1
             else:
                 row[sh] = ""
+
         row["PASS"] = pass_count
         row["FAIL"] = fail_count
         backtest_rows.append(row)
 
     return success_history, backtest_rows, seq_counter
 
-def build_shift_history(df_part, shift):
-    history = []
-    rows = []
-    seq_counter = Counter()
-
-    if shift not in df_part.columns:
-        return history, rows, seq_counter
-
-    for i in range(len(df_part) - 1):
-        cur = df_part.iloc[i]
-        nxt = df_part.iloc[i + 1]
-
-        cur_val_s = pd.to_numeric(pd.Series([cur[shift]]), errors='coerce').dropna()
-        nxt_vals = pd.to_numeric(nxt[SHIFT_ORDER if all(x in df_part.columns for x in SHIFT_ORDER) else [shift]], errors='coerce').dropna().astype(int).tolist()
-        nxt_set = set(nxt_vals)
-
-        if len(cur_val_s) == 0:
-            history.append([])
-            continue
-
-        val = int(cur_val_s.iloc[0])
-        found = [p for p in MASTER_PATTERNS if (val + p) % 100 in nxt_set]
-        found = list(dict.fromkeys(found))
-        history.append(found)
-
-        for combo_size in [1, 2, 3]:
-            if len(found) >= combo_size:
-                for combo in combinations(sorted(found), combo_size):
-                    for n in nxt_vals:
-                        seq_counter[(combo, n)] += 1
-
-        rows.append({
-            "DATE": cur["DATE"].date(),
-            shift: f"{val} ✅" if has_hit(val, nxt_set) else f"{val} ❌",
-            "PASS": 1 if has_hit(val, nxt_set) else 0,
-            "FAIL": 0 if has_hit(val, nxt_set) else 1
-        })
-
-    return history, rows, seq_counter
+def render_accuracy_table(rows, shift_name=None):
+    acc_rows = []
+    for r in rows:
+        if shift_name:
+            val = r.get(shift_name, "")
+            hit = "✅" in str(val)
+            acc_rows.append({
+                "DATE": r["DATE"],
+                "PASS": 1 if hit else 0,
+                "FAIL": 0 if hit else 1,
+                "ACCURACY %": 100.0 if hit else 0.0
+            })
+        else:
+            p = int(r.get("PASS", 0))
+            f = int(r.get("FAIL", 0))
+            total = p + f
+            acc = round((p / total) * 100, 2) if total > 0 else 0.0
+            acc_rows.append({
+                "DATE": r["DATE"],
+                "PASS": p,
+                "FAIL": f,
+                "ACCURACY %": acc
+            })
+    st.dataframe(pd.DataFrame(acc_rows), use_container_width=True, height=260)
 
 uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'])
 
@@ -157,8 +144,8 @@ mode = st.sidebar.selectbox("Select Mode", ["All Code", "Shift Wise"], index=0)
 st.sidebar.header("📅 Prediction Date")
 prediction_date = st.sidebar.selectbox("Select Prediction Date", unique_dates, index=len(unique_dates)-1)
 
-st.sidebar.header("📆 Auto History Range")
-auto_days = st.sidebar.slider("Auto History Days", 7, 100, 30)
+st.sidebar.header("📆 History Limit")
+history_limit = st.sidebar.radio("Select History Days", [30, 45], index=1)
 
 st.sidebar.header("✍️ Manual Override")
 use_manual_range = st.sidebar.checkbox("Enable manual range override", value=False)
@@ -177,12 +164,9 @@ if use_manual_range:
         st.stop()
 else:
     pred_idx = unique_dates.index(prediction_date)
-    start_idx = max(0, pred_idx - auto_days + 1)
+    start_idx = max(0, pred_idx - history_limit + 1)
     start_date = unique_dates[start_idx]
     end_date = prediction_date
-
-st.sidebar.header("🎯 Display Controls")
-show_chart = st.sidebar.checkbox("Show Frequency Chart", value=False)
 
 st.success(f"Selected prediction date: {prediction_date} | History range: {start_date} to {end_date}")
 
@@ -190,6 +174,8 @@ df_range = df[(df['DATE'].dt.date >= start_date) & (df['DATE'].dt.date <= end_da
 if len(df_range) < 2:
     st.error("Selected range में पर्याप्त data नहीं है.")
     st.stop()
+
+history_snapshot = df_range.tail(history_limit).copy().reset_index(drop=True)
 
 def render_all_code():
     st.header("📊 All Code Analysis")
@@ -199,7 +185,7 @@ def render_all_code():
         st.warning("Not enough data for combined analysis.")
         return
 
-    window_options = [1, 3, 7, 10, 15, 30, 60, 90]
+    window_options = [1, 3, 7, 10, 15, 30, 45]
     default_window = safe_window_default(len(success_history))
     window = st.sidebar.select_slider("Select Days", options=window_options, value=default_window)
 
@@ -213,26 +199,10 @@ def render_all_code():
     if len(top_3) > 1: c2.metric("🥈 Second Best", str(top_3[1][0]), f"{top_3[1][1]} Hits")
     if len(top_3) > 2: c3.metric("🥉 Third Best", str(top_3[2][0]), f"{top_3[2][1]} Hits")
 
-    if show_chart and freq_map:
-        st.subheader("📈 Pattern Chart")
-        chart_df = pd.DataFrame(freq_map.items(), columns=["Pattern", "Hits"]).sort_values("Hits", ascending=False)
-        st.bar_chart(chart_df.set_index("Pattern"))
-
     st.divider()
-    st.subheader("💎 Weekly vs Monthly")
-    weekly_data = [p for sub in success_history[-7:] for p in sub]
-    monthly_data = [p for sub in success_history[-30:] for p in sub]
-    weekly_freq = Counter(weekly_data)
-    monthly_freq = Counter(monthly_data)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write("Weekly:", weekly_freq.most_common(5))
-    with col2:
-        st.write("Monthly:", monthly_freq.most_common(5))
-
-    jackpot = list(set([p for p, _ in weekly_freq.most_common(10)]).intersection(set([p for p, _ in monthly_freq.most_common(10)])))
-    st.warning(f"Jackpot Patterns: {jackpot}")
+    st.subheader("📅 Today / Selected Date Snapshot")
+    st.write(f"Selected Date: {prediction_date}")
+    st.dataframe(history_snapshot.tail(1)[['DATE'] + shifts_present], use_container_width=True, height=120)
 
     st.divider()
     st.subheader("✅ Backtest History")
@@ -241,7 +211,6 @@ def render_all_code():
     st.divider()
     st.subheader("🔮 Final Prediction")
     last_ps = success_history[-1]
-
     seq_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
     final_unique = list(dict.fromkeys(seq_preds))[:10]
 
@@ -254,15 +223,8 @@ def render_all_code():
     st.success(f"Final predicted numbers: {final_unique}")
 
     st.divider()
-    st.subheader("📋 Date-wise Accuracy Table")
-    acc_rows = []
-    for r in backtest_rows:
-        p = int(r["PASS"])
-        f = int(r["FAIL"])
-        total = p + f
-        acc = round((p / total) * 100, 2) if total > 0 else 0
-        acc_rows.append({"DATE": r["DATE"], "PASS": p, "FAIL": f, "ACCURACY %": acc})
-    st.dataframe(pd.DataFrame(acc_rows), use_container_width=True, height=260)
+    st.subheader("📋 Historical Backtest Accuracy")
+    render_accuracy_table(backtest_rows, None)
 
 def render_shift_wise():
     st.header("📊 Shift Wise Analysis")
@@ -274,7 +236,7 @@ def render_shift_wise():
         st.warning("Not enough data for this shift.")
         return
 
-    window_options = [1, 3, 7, 10, 15, 30, 60, 90]
+    window_options = [1, 3, 7, 10, 15, 30, 45]
     default_window = safe_window_default(len(success_history))
     window = st.sidebar.select_slider("Select Days", options=window_options, value=default_window)
 
@@ -288,10 +250,10 @@ def render_shift_wise():
     if len(top_3) > 1: c2.metric("🥈 Second Best", str(top_3[1][0]), f"{top_3[1][1]} Hits")
     if len(top_3) > 2: c3.metric("🥉 Third Best", str(top_3[2][0]), f"{top_3[2][1]} Hits")
 
-    if show_chart and freq_map:
-        st.subheader("📈 Pattern Chart")
-        chart_df = pd.DataFrame(freq_map.items(), columns=["Pattern", "Hits"]).sort_values("Hits", ascending=False)
-        st.bar_chart(chart_df.set_index("Pattern"))
+    st.divider()
+    st.subheader("📅 Today / Selected Date Snapshot")
+    st.write(f"Selected Date: {prediction_date}")
+    st.dataframe(history_snapshot.tail(1)[['DATE'] + shifts_present], use_container_width=True, height=120)
 
     st.divider()
     st.subheader(f"✅ Backtest History - {selected_shift}")
@@ -317,19 +279,8 @@ def render_shift_wise():
     st.success(f"Final predicted numbers: {pred_nums}")
 
     st.divider()
-    st.subheader("📋 Date-wise Accuracy Table")
-    acc_rows = []
-    for r in shift_rows:
-        val = r[selected_shift]
-        if val:
-            hit = "✅" in str(val)
-            acc_rows.append({
-                "DATE": r["DATE"],
-                "PASS": 1 if hit else 0,
-                "FAIL": 0 if hit else 1,
-                "ACCURACY %": 100.0 if hit else 0.0
-            })
-    st.dataframe(pd.DataFrame(acc_rows), use_container_width=True, height=260)
+    st.subheader("📋 Historical Backtest Accuracy")
+    render_accuracy_table(shift_rows, selected_shift)
 
 if mode == "All Code":
     render_all_code()
