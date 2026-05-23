@@ -11,6 +11,9 @@ st.write("शॉर्ट-टर्म और लॉन्ग-टर्म ड�
 MASTER_PATTERNS = [0, -18, -16, -26, -32, -1, -4, -11, -15, -10, -51, -50, 15, 5, -5, -55, 1, 10, 11, 51, 55, -40]
 SHIFT_ORDER = ['DS', 'DB', 'SG', 'FD', 'GD', 'GL']
 
+if "manual_rows" not in st.session_state:
+    st.session_state.manual_rows = {}
+
 def clean_df(uploaded_file):
     if uploaded_file.name.endswith('.csv'):
         df = pd.read_csv(uploaded_file)
@@ -53,51 +56,56 @@ def build_all_history(df_part, shifts):
     seq_counter = Counter()
     tier_rows = []
 
-    for i in range(len(df_part) - 1):
+    for i in range(len(df_part)):
         cur = df_part.iloc[i]
-        nxt = df_part.iloc[i + 1]
+        nxt = df_part.iloc[i + 1] if i + 1 < len(df_part) else None
 
-        cur_vals = pd.to_numeric(cur[shifts], errors='coerce').dropna().astype(int).tolist()
-        nxt_vals = pd.to_numeric(nxt[shifts], errors='coerce').dropna().astype(int).tolist()
-        nxt_set = set(nxt_vals)
+        if nxt is not None:
+            cur_vals = pd.to_numeric(cur[shifts], errors='coerce').dropna().astype(int).tolist()
+            nxt_vals = pd.to_numeric(nxt[shifts], errors='coerce').dropna().astype(int).tolist()
+            nxt_set = set(nxt_vals)
 
-        found_patterns = []
-        for v in set(cur_vals):
-            for p in MASTER_PATTERNS:
-                if (v + p) % 100 in nxt_set:
-                    found_patterns.append(p)
-        found_patterns = list(dict.fromkeys(found_patterns))
-        success_history.append(found_patterns)
+            found_patterns = []
+            for v in set(cur_vals):
+                for p in MASTER_PATTERNS:
+                    if (v + p) % 100 in nxt_set:
+                        found_patterns.append(p)
+            found_patterns = list(dict.fromkeys(found_patterns))
+            success_history.append(found_patterns)
 
-        for combo_size in [1, 2, 3]:
-            if len(found_patterns) >= combo_size:
-                for combo in combinations(sorted(found_patterns), combo_size):
-                    for n in nxt_vals:
-                        seq_counter[(combo, n)] += 1
+            for combo_size in [1, 2, 3]:
+                if len(found_patterns) >= combo_size:
+                    for combo in combinations(sorted(found_patterns), combo_size):
+                        for n in nxt_vals:
+                            seq_counter[(combo, n)] += 1
+        else:
+            success_history.append([])
 
         row = {"DATE": cur["DATE"].date()}
         pass_count = 0
         fail_count = 0
-        for sh in SHIFT_ORDER:
-            if sh in shifts and pd.notna(cur[sh]):
-                val = int(cur[sh])
-                hit = has_hit(val, nxt_set)
-                row[sh] = f"{val} ✅" if hit else f"{val} ❌"
-                pass_count += 1 if hit else 0
-                fail_count += 0 if hit else 1
-            else:
+
+        if nxt is not None:
+            nxt_set = set(pd.to_numeric(nxt[shifts], errors='coerce').dropna().astype(int).tolist())
+            for sh in SHIFT_ORDER:
+                if sh in shifts and pd.notna(cur[sh]):
+                    val = int(cur[sh])
+                    hit = has_hit(val, nxt_set)
+                    row[sh] = f"{val} ✅" if hit else f"{val} ❌"
+                    pass_count += 1 if hit else 0
+                    fail_count += 0 if hit else 1
+                else:
+                    row[sh] = ""
+        else:
+            for sh in SHIFT_ORDER:
                 row[sh] = ""
+
         row["PASS"] = pass_count
         row["FAIL"] = fail_count
         backtest_rows.append(row)
 
     for rank, ((combo, num), count) in enumerate(seq_counter.most_common(20), start=1):
-        tier_rows.append({
-            "Tier": f"Tier {rank}",
-            "Combo": str(combo),
-            "Generated": num,
-            "Hits": count
-        })
+        tier_rows.append({"Tier": f"Tier {rank}", "Combo": str(combo), "Generated": num, "Hits": count})
 
     return success_history, add_accuracy(backtest_rows), pd.DataFrame(tier_rows), seq_counter
 
@@ -107,44 +115,57 @@ def build_shift_history(df_part, shift, available_shifts):
     seq_counter = Counter()
     tier_rows = []
 
-    for i in range(len(df_part) - 1):
+    for i in range(len(df_part)):
         cur = df_part.iloc[i]
-        nxt = df_part.iloc[i + 1]
+        nxt = df_part.iloc[i + 1] if i + 1 < len(df_part) else None
 
         cur_val_s = pd.to_numeric(pd.Series([cur[shift]]), errors='coerce').dropna()
-        nxt_vals = pd.to_numeric(nxt.reindex(available_shifts), errors='coerce').dropna().astype(int).tolist()
-        nxt_set = set(nxt_vals)
 
-        if len(cur_val_s) == 0:
+        if nxt is not None:
+            nxt_vals = pd.to_numeric(nxt.reindex(available_shifts), errors='coerce').dropna().astype(int).tolist()
+            nxt_set = set(nxt_vals)
+
+            if len(cur_val_s) == 0:
+                success_history.append([])
+            else:
+                val = int(cur_val_s.iloc[0])
+                found = [p for p in MASTER_PATTERNS if (val + p) % 100 in nxt_set]
+                found = list(dict.fromkeys(found))
+                success_history.append(found)
+
+                for combo_size in [1, 2, 3]:
+                    if len(found) >= combo_size:
+                        for combo in combinations(sorted(found), combo_size):
+                            for n in nxt_vals:
+                                seq_counter[(combo, n)] += 1
+
+                hit = has_hit(val, nxt_set)
+                rows.append({
+                    "DATE": cur["DATE"].date(),
+                    shift: f"{val} ✅" if hit else f"{val} ❌",
+                    "PASS": 1 if hit else 0,
+                    "FAIL": 0 if hit else 1
+                })
+        else:
             success_history.append([])
-            continue
-
-        val = int(cur_val_s.iloc[0])
-        found = [p for p in MASTER_PATTERNS if (val + p) % 100 in nxt_set]
-        found = list(dict.fromkeys(found))
-        success_history.append(found)
-
-        for combo_size in [1, 2, 3]:
-            if len(found) >= combo_size:
-                for combo in combinations(sorted(found), combo_size):
-                    for n in nxt_vals:
-                        seq_counter[(combo, n)] += 1
-
-        hit = has_hit(val, nxt_set)
-        rows.append({
-            "DATE": cur["DATE"].date(),
-            shift: f"{val} ✅" if hit else f"{val} ❌",
-            "PASS": 1 if hit else 0,
-            "FAIL": 0 if hit else 1
-        })
+            if len(cur_val_s) > 0:
+                val = int(cur_val_s.iloc[0])
+                rows.append({
+                    "DATE": cur["DATE"].date(),
+                    shift: f"{val} ⏺",
+                    "PASS": 0,
+                    "FAIL": 0
+                })
+            else:
+                rows.append({
+                    "DATE": cur["DATE"].date(),
+                    shift: "",
+                    "PASS": 0,
+                    "FAIL": 0
+                })
 
     for rank, ((combo, num), count) in enumerate(seq_counter.most_common(20), start=1):
-        tier_rows.append({
-            "Tier": f"Tier {rank}",
-            "Combo": str(combo),
-            "Generated": num,
-            "Hits": count
-        })
+        tier_rows.append({"Tier": f"Tier {rank}", "Combo": str(combo), "Generated": num, "Hits": count})
 
     return success_history, add_accuracy(rows), pd.DataFrame(tier_rows), seq_counter
 
@@ -172,13 +193,7 @@ def tier_vs_shift_summary(seq_counter, selected_shift):
     rows = []
     items = seq_counter.most_common(20)
     for rank, ((combo, num), count) in enumerate(items, start=1):
-        rows.append({
-            "Shift": selected_shift,
-            "Tier": f"Tier {rank}",
-            "Combo": str(combo),
-            "Generated": num,
-            "Hits": count
-        })
+        rows.append({"Shift": selected_shift, "Tier": f"Tier {rank}", "Combo": str(combo), "Generated": num, "Hits": count})
     return pd.DataFrame(rows)
 
 def show_prediction_box(numbers, title="Prediction Box"):
@@ -231,12 +246,7 @@ st.sidebar.header("✍️ Manual Override")
 use_manual_range = st.sidebar.checkbox("Enable manual range override", value=False)
 
 if use_manual_range:
-    manual_range = st.sidebar.date_input(
-        "Select Start and End Date",
-        value=(unique_dates[0], prediction_date),
-        min_value=unique_dates[0],
-        max_value=unique_dates[-1]
-    )
+    manual_range = st.sidebar.date_input("Select Start and End Date", value=(unique_dates[0], prediction_date), min_value=unique_dates[0], max_value=unique_dates[-1])
     if isinstance(manual_range, tuple) and len(manual_range) == 2:
         start_date, end_date = manual_range
     else:
@@ -251,8 +261,8 @@ else:
 st.success(f"Selected prediction date: {prediction_date} | History range: {start_date} to {end_date}")
 
 df_range = df[(df['DATE'].dt.date >= start_date) & (df['DATE'].dt.date <= end_date)].copy().reset_index(drop=True)
-if len(df_range) < 2:
-    st.error("Selected range में पर्याप्त data नहीं है.")
+if len(df_range) < 1:
+    st.error("Selected range में data नहीं है.")
     st.stop()
 
 def render_all_code():
@@ -266,7 +276,6 @@ def render_all_code():
     recent_data = success_history[-window:] if window <= len(success_history) else success_history
     flat = [p for sub in recent_data for p in sub]
     freq_map = Counter(flat)
-
     support_box(freq_map)
 
     st.markdown("### 4-Tier Matching")
@@ -278,10 +287,11 @@ def render_all_code():
     st.markdown("### ✅ Backtest History")
     st.dataframe(backtest_df, use_container_width=True, height=420, hide_index=True)
 
-    last_ps = success_history[-1]
-    seq_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
-    final_unique = list(dict.fromkeys(seq_preds))[:10]
-    show_prediction_box(final_unique, "Current Prediction")
+    if len(success_history) > 0:
+        last_ps = success_history[-1]
+        seq_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
+        final_unique = list(dict.fromkeys(seq_preds))[:10]
+        show_prediction_box(final_unique, "Current Prediction")
 
 def render_shift_wise():
     st.header("📊 Shift Wise Analysis")
@@ -296,7 +306,6 @@ def render_shift_wise():
     recent_data = success_history[-window:] if window <= len(success_history) else success_history
     flat = [p for sub in recent_data for p in sub]
     freq_map = Counter(flat)
-
     support_box(freq_map)
 
     st.markdown(f"### 4-Tier Matching - {selected_shift}")
