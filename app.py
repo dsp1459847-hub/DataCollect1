@@ -28,19 +28,11 @@ st.markdown("""
     margin-bottom: 8px;
     background: #f8f8f8;
 }
-.hit {
-    color: #0a7a0a;
-    font-weight: 700;
-}
-.miss {
-    color: #c00000;
-    font-weight: 700;
-}
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🏆 Monthly & Weekly Jackpot Pattern Analyzer")
-st.write("शॉर्ट-टर्म और लॉन्ग-टर्म डेटा से pattern analysis, backtest, tier matching, और prediction.")
+st.write("Pattern analysis, backtest, tier matching, and prediction.")
 
 MASTER_PATTERNS = [0, -18, -16, -26, -32, -1, -4, -11, -15, -10, -51, -50, 15, 5, -5, -55, 1, 10, 11, 51, 55, -40]
 SHIFT_ORDER = ['DS', 'DB', 'SG', 'FD', 'GD', 'GL']
@@ -49,7 +41,8 @@ if "manual_rows" not in st.session_state:
     st.session_state.manual_rows = {}
 
 def clean_df(uploaded_file):
-    if uploaded_file.name.endswith('.csv'):
+    uploaded_file.seek(0)
+    if uploaded_file.name.lower().endswith('.csv'):
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file, engine="openpyxl")
@@ -101,7 +94,7 @@ def build_all_history(df_part, shifts):
 
             found_patterns = []
             for v in set(cur_vals):
-                for p in MASTER_PATTERNS:
+                for p in MASTER_PATTERNS[:20]:
                     if (v + p) % 100 in nxt_set:
                         found_patterns.append(p)
             found_patterns = list(dict.fromkeys(found_patterns))
@@ -163,7 +156,7 @@ def build_shift_history(df_part, shift, available_shifts):
                 success_history.append([])
             else:
                 val = int(cur_val_s.iloc[0])
-                found = [p for p in MASTER_PATTERNS if (val + p) % 100 in nxt_set]
+                found = [p for p in MASTER_PATTERNS[:20] if (val + p) % 100 in nxt_set]
                 found = list(dict.fromkeys(found))
                 success_history.append(found)
 
@@ -255,21 +248,10 @@ def build_prediction_items_from_last(last_val):
     preds = []
     for i, p in enumerate(MASTER_PATTERNS[:20]):
         val = (last_val + p) % 100
-        preds.append(f"{mark_rank(i)} {val}  |  P{i+1}: {p}")
+        preds.append(f"{mark_rank(i)} {val} | P{i+1} ({p})")
     return preds
 
-def build_prediction_items_from_top(tier_df):
-    if tier_df.empty:
-        return []
-    items = []
-    for i, row in tier_df.head(20).iterrows():
-        combo = row["Combo"]
-        gen = row["Generated"]
-        hits = row["Hits"]
-        items.append(f"{mark_rank(i)} {gen}  |  {combo}  |  {hits} hits")
-    return items
-
-uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'])
+uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'], key="data_uploader")
 
 if not uploaded_file:
     st.info("Sidebar में अपनी डेटा फाइल अपलोड करें।")
@@ -294,19 +276,19 @@ if not unique_dates:
     st.stop()
 
 st.sidebar.header("⚙️ Mode")
-mode = st.sidebar.selectbox("Select Mode", ["All Code", "Shift Wise"], index=0)
+mode = st.sidebar.selectbox("Select Mode", ["All Code", "Shift Wise"], index=0, key="mode_select")
 
 st.sidebar.header("📅 Prediction Date")
-prediction_date = st.sidebar.selectbox("Select Prediction Date", unique_dates, index=len(unique_dates)-1)
+prediction_date = st.sidebar.selectbox("Select Prediction Date", unique_dates, index=len(unique_dates)-1, key="pred_date")
 
 st.sidebar.header("📆 History Limit")
-history_limit = st.sidebar.radio("Select History Days", [30, 45], index=1)
+history_limit = st.sidebar.radio("Select History Days", [30, 45], index=1, key="history_limit")
 
 st.sidebar.header("✍️ Manual Override")
-use_manual_range = st.sidebar.checkbox("Enable manual range override", value=False)
+use_manual_range = st.sidebar.checkbox("Enable manual range override", value=False, key="manual_override")
 
 if use_manual_range:
-    manual_range = st.sidebar.date_input("Select Start and End Date", value=(unique_dates[0], prediction_date), min_value=unique_dates[0], max_value=unique_dates[-1])
+    manual_range = st.sidebar.date_input("Select Start and End Date", value=(unique_dates[0], prediction_date), min_value=unique_dates[0], max_value=unique_dates[-1], key="date_range")
     if isinstance(manual_range, tuple) and len(manual_range) == 2:
         start_date, end_date = manual_range
     else:
@@ -331,7 +313,7 @@ def render_all_code():
 
     window_options = [1, 3, 7, 10, 15, 30, 45]
     default_window = safe_window_default(len(success_history))
-    window = st.sidebar.select_slider("Select Days", options=window_options, value=default_window)
+    window = st.sidebar.select_slider("Select Days", options=window_options, value=default_window, key="all_window")
 
     recent_data = success_history[-window:] if window <= len(success_history) else success_history
     flat = [p for sub in recent_data for p in sub]
@@ -355,13 +337,13 @@ def render_all_code():
 
 def render_shift_wise():
     st.header("📊 Shift Wise Analysis")
-    selected_shift = st.selectbox("Select Shift", shifts_present, index=0)
+    selected_shift = st.selectbox("Select Shift", shifts_present, index=0, key="shift_select")
 
     success_history, shift_df, tier_df, seq_counter = build_shift_history(df_range, selected_shift, shifts_present)
 
     window_options = [1, 3, 7, 10, 15, 30, 45]
     default_window = safe_window_default(len(success_history))
-    window = st.sidebar.select_slider("Select Days", options=window_options, value=default_window)
+    window = st.sidebar.select_slider("Select Days", options=window_options, value=default_window, key="shift_window")
 
     recent_data = success_history[-window:] if window <= len(success_history) else success_history
     flat = [p for sub in recent_data for p in sub]
@@ -386,128 +368,6 @@ def render_shift_wise():
         return
 
     st.caption(f"Last valid {selected_shift}: {last_val} on {last_date}")
-
-    pred_items = build_prediction_items_from_last(last_val)
-    render_boxes(pred_items, "Current Shift Prediction")
-
-uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'])
-
-if not uploaded_file:
-    st.info("Sidebar में अपनी डेटा फाइल अपलोड करें।")
-    st.stop()
-
-df, err = clean_df(uploaded_file)
-if err:
-    st.error(err)
-    st.stop()
-
-shifts_present = available_shift_cols(df)
-if len(shifts_present) == 0:
-    st.error("No shift columns found.")
-    st.stop()
-
-for c in shifts_present:
-    df[c] = pd.to_numeric(df[c], errors='coerce')
-
-unique_dates = sorted(df['DATE'].dt.date.unique().tolist())
-if not unique_dates:
-    st.error("No valid dates found.")
-    st.stop()
-
-st.sidebar.header("⚙️ Mode")
-mode = st.sidebar.selectbox("Select Mode", ["All Code", "Shift Wise"], index=0)
-
-st.sidebar.header("📅 Prediction Date")
-prediction_date = st.sidebar.selectbox("Select Prediction Date", unique_dates, index=len(unique_dates)-1)
-
-st.sidebar.header("📆 History Limit")
-history_limit = st.sidebar.radio("Select History Days", [30, 45], index=1)
-
-st.sidebar.header("✍️ Manual Override")
-use_manual_range = st.sidebar.checkbox("Enable manual range override", value=False)
-
-if use_manual_range:
-    manual_range = st.sidebar.date_input("Select Start and End Date", value=(unique_dates[0], prediction_date), min_value=unique_dates[0], max_value=unique_dates[-1])
-    if isinstance(manual_range, tuple) and len(manual_range) == 2:
-        start_date, end_date = manual_range
-    else:
-        st.warning("Please select both start and end dates.")
-        st.stop()
-else:
-    pred_idx = unique_dates.index(prediction_date)
-    start_idx = max(0, pred_idx - history_limit + 1)
-    start_date = unique_dates[start_idx]
-    end_date = prediction_date
-
-st.success(f"Selected prediction date: {prediction_date} | History range: {start_date} to {end_date}")
-
-df_range = df[(df['DATE'].dt.date >= start_date) & (df['DATE'].dt.date <= end_date)].copy().reset_index(drop=True)
-if len(df_range) < 1:
-    st.error("Selected range में data नहीं है.")
-    st.stop()
-
-def render_all_code():
-    st.header("📊 All Code Analysis")
-    success_history, backtest_df, tier_df, seq_counter = build_all_history(df_range, shifts_present)
-
-    window_options = [1, 3, 7, 10, 15, 30, 45]
-    default_window = safe_window_default(len(success_history))
-    window = st.sidebar.select_slider("Select Days", options=window_options, value=default_window)
-
-    recent_data = success_history[-window:] if window <= len(success_history) else success_history
-    flat = [p for sub in recent_data for p in sub]
-    freq_map = Counter(flat)
-    support_box(freq_map)
-
-    st.markdown("### 4-Tier Matching")
-    st.dataframe(tier_df, use_container_width=True, height=240, hide_index=True)
-
-    st.markdown("### Best Tier Summary")
-    st.dataframe(best_tier_summary(tier_df), use_container_width=True, height=180, hide_index=True)
-
-    st.markdown("### ✅ Backtest History")
-    st.dataframe(backtest_df, use_container_width=True, height=420, hide_index=True)
-
-    if len(success_history) > 0:
-        last_ps = success_history[-1]
-        seq_preds = [nxt for (prev, nxt), count in seq_counter.most_common(20) if set(prev).issubset(set(last_ps))]
-        final_unique = list(dict.fromkeys(seq_preds))[:20]
-        render_boxes([f"{mark_rank(i)} {x}" for i, x in enumerate(final_unique)], "Current Prediction")
-
-def render_shift_wise():
-    st.header("📊 Shift Wise Analysis")
-    selected_shift = st.selectbox("Select Shift", shifts_present, index=0)
-
-    success_history, shift_df, tier_df, seq_counter = build_shift_history(df_range, selected_shift, shifts_present)
-
-    window_options = [1, 3, 7, 10, 15, 30, 45]
-    default_window = safe_window_default(len(success_history))
-    window = st.sidebar.select_slider("Select Days", options=window_options, value=default_window)
-
-    recent_data = success_history[-window:] if window <= len(success_history) else success_history
-    flat = [p for sub in recent_data for p in sub]
-    freq_map = Counter(flat)
-    support_box(freq_map)
-
-    st.markdown(f"### 4-Tier Matching - {selected_shift}")
-    st.dataframe(tier_df, use_container_width=True, height=240, hide_index=True)
-
-    st.markdown("### Best Tier Summary")
-    st.dataframe(best_tier_summary(tier_df), use_container_width=True, height=180, hide_index=True)
-
-    st.markdown(f"### ✅ Backtest History - {selected_shift}")
-    st.dataframe(shift_df, use_container_width=True, height=420, hide_index=True)
-
-    st.markdown("### Which Tier Passes More")
-    st.dataframe(tier_vs_shift_summary(seq_counter, selected_shift), use_container_width=True, height=220, hide_index=True)
-
-    last_val, last_date = get_last_valid_value(df_range, selected_shift)
-    if last_val is None:
-        st.warning("No valid latest value.")
-        return
-
-    st.caption(f"Last valid {selected_shift}: {last_val} on {last_date}")
-
     pred_items = build_prediction_items_from_last(last_val)
     render_boxes(pred_items, "Current Shift Prediction")
 
