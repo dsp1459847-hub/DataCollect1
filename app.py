@@ -127,17 +127,15 @@ def build_shift_history(df_part, shift, available_shifts):
                     for n in nxt_vals:
                         seq_counter[(combo, n)] += 1
 
+        hit = has_hit(val, nxt_set)
         rows.append({
             "DATE": cur["DATE"].date(),
-            shift: f"{val} ✅" if has_hit(val, nxt_set) else f"{val} ❌",
-            "PASS": 1 if has_hit(val, nxt_set) else 0,
+            shift: f"{val} ✅" if hit else f"{val} ❌",
+            "PASS": 1 if hit else 0,
             "FAIL": 0 if hit else 1
         })
 
     return success_history, add_accuracy(rows), seq_counter
-
-def render_table(df_table):
-    st.dataframe(df_table, use_container_width=True, height=520)
 
 uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'])
 
@@ -219,7 +217,7 @@ def render_all_code():
     if len(top_3) > 2: c3.metric("🥉 Third Best", str(top_3[2][0]), f"{top_3[2][1]} Hits")
 
     st.subheader("✅ Backtest History")
-    render_table(backtest_df)
+    st.dataframe(backtest_df, use_container_width=True, height=520)
 
     st.subheader("🔮 Final Prediction")
     last_ps = success_history[-1]
@@ -249,7 +247,7 @@ def render_shift_wise():
     if len(top_3) > 2: c3.metric("🥉 Third Best", str(top_3[2][0]), f"{top_3[2][1]} Hits")
 
     st.subheader(f"✅ Backtest History - {selected_shift}")
-    render_table(shift_df)
+    st.dataframe(shift_df, use_container_width=True, height=520)
 
     st.subheader(f"🔮 Final Prediction - {selected_shift}")
     last_val_s = pd.to_numeric(pd.Series([df_range.iloc[-1][selected_shift]]), errors='coerce').dropna()
