@@ -47,27 +47,39 @@ if uploaded_file:
     for col in available_shifts:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    st.sidebar.header("📅 Date Selection")
     unique_dates = sorted(df['DATE'].dt.date.unique().tolist())
 
-    selected_date = st.sidebar.selectbox(
-        "Select Date",
-        unique_dates,
-        index=len(unique_dates) - 1
+    st.sidebar.header("📅 Date Range Picker")
+    date_range = st.sidebar.date_input(
+        "Select Start and End Date",
+        value=(unique_dates[0], unique_dates[-1]),
+        min_value=unique_dates[0],
+        max_value=unique_dates[-1]
     )
+
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
+    else:
+        st.warning("Please select both start and end dates.")
+        st.stop()
 
     history_days = st.sidebar.slider("History Days", 7, 100, 30)
     window = st.sidebar.select_slider("Select Days", options=[1, 3, 7, 10, 15, 30, 60, 90], value=30)
+    chain_size = st.sidebar.radio("Chain की depth चुनें:", [1, 2, 3, 4, 5], horizontal=True)
 
-    df_filtered = df[df['DATE'].dt.date <= selected_date].copy().reset_index(drop=True)
-    df_recent = df_filtered.tail(history_days).copy().reset_index(drop=True)
+    df_range = df[
+        (df['DATE'].dt.date >= start_date) &
+        (df['DATE'].dt.date <= end_date)
+    ].copy().reset_index(drop=True)
 
-    st.header(f"📊 Selected Date: {selected_date}")
-    st.write(f"Using last {len(df_recent)} rows for analysis.")
-
-    if len(df_recent) < 2:
-        st.warning("Backtest ke liye enough data nahi hai.")
+    if len(df_range) < 2:
+        st.error("Selected date range में पर्याप्त data नहीं है.")
         st.stop()
+
+    df_recent = df_range.tail(history_days).copy().reset_index(drop=True)
+
+    st.header(f"📊 Selected Range: {start_date} to {end_date}")
+    st.write(f"Using last {len(df_recent)} rows for analysis.")
 
     success_history = []
     row_dates = []
@@ -78,7 +90,6 @@ if uploaded_file:
 
         today = set(today_vals.astype(int).tolist())
         tomorrow = set(tomorrow_vals.astype(int).tolist())
-
         row_dates.append(df_recent.iloc[i]['DATE'].date())
 
         if not today or not tomorrow:
@@ -141,7 +152,6 @@ if uploaded_file:
 
     st.divider()
     st.header("🔗 Sequence Chain Analysis")
-    chain_size = st.radio("Chain की depth चुनें:", [1, 2, 3, 4, 5], horizontal=True)
 
     seq_counter = Counter()
     for i in range(len(recent_data) - 1):
@@ -152,35 +162,51 @@ if uploaded_file:
                     seq_counter[(combo, n)] += 1
 
     if seq_counter:
-        st.table([
-            {"Current Group": k[0], "Next Likely": k[1], "Total Hits": v}
-            for k, v in seq_counter.most_common(10)
-        ])
+        chain_table = pd.DataFrame(
+            [{"Current Group": k[0], "Next Likely": k[1], "Total Hits": v} for k, v in seq_counter.most_common(10)]
+        )
+        st.dataframe(chain_table, use_container_width=True)
     else:
         st.write("पर्याप्त डेटा नहीं है।")
 
     st.divider()
-    if success_history:
-        last_ps = success_history[-1]
-        st.subheader(f"🔮 Selected-date latest success: {last_ps}")
-        final_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
-        if final_preds:
-            st.success(f"कल के लिए 'Jackpot' सुझाव: {list(set(final_preds))}")
+    st.header("✅ Backtest Results")
 
-    st.divider()
-    st.subheader("📋 Backtest Table")
     bt_rows = []
-    for i in range(max(0, len(success_history) - 10), len(success_history)):
+    for i in range(len(success_history)):
+        predicted_patterns = success_history[i]
+        actual_next = []
+        if i + 1 < len(df_recent):
+            actual_next = pd.to_numeric(df_recent.iloc[i + 1][available_shifts], errors='coerce').dropna().astype(int).tolist()
+
+        hit = 1 if any(pat in predicted_patterns for pat in predicted_patterns) else 0
+
         bt_rows.append({
-            "Row": i + 1,
-            "Date": str(row_dates[i]) if i < len(row_dates) else "",
-            "Patterns Found": success_history[i]
+            "Date": row_dates[i],
+            "Predicted Patterns": predicted_patterns,
+            "Actual Next Values": actual_next,
+            "Hit": "✅" if predicted_patterns and actual_next else "❌"
         })
 
     if bt_rows:
         st.dataframe(pd.DataFrame(bt_rows), use_container_width=True)
     else:
         st.info("Backtest ke liye पर्याप्त data नहीं है.")
+
+    st.divider()
+    st.header("🔮 Final Prediction")
+
+    if success_history:
+        last_ps = success_history[-1]
+        st.subheader(f"Latest Pattern History: {last_ps}")
+
+        final_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
+        final_unique = list(dict.fromkeys(final_preds))
+
+        if final_unique:
+            st.success(f"Final predicted numbers: {final_unique[:10]}")
+        else:
+            st.warning("Final prediction list empty hai.")
 
 else:
     st.info("Sidebar में अपनी डेटा फाइल अपलोड करें।")
