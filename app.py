@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from collections import Counter
+from collections import Counter, defaultdict
 from itertools import combinations
 
 st.set_page_config(page_title="Jackpot Pattern AI", layout="wide")
@@ -28,13 +28,14 @@ st.markdown("""
     margin-bottom: 8px;
     background: #f8f8f8;
 }
+.good { color: #0a7a0a; font-weight: 700; }
+.bad { color: #c00000; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🏆 Monthly & Weekly Jackpot Pattern Analyzer")
-st.write("Pattern analysis, backtest, tier matching, and prediction.")
+st.write("6-shift pooled analysis, unique/common/remainder numbers, probability, and backtest.")
 
-MASTER_PATTERNS = [0, -18, -16, -26, -32, -1, -4, -11, -15, -10, -51, -50, 15, 5, -5, -55, 1, 10, 11, 51, 55, -40]
 SHIFT_ORDER = ['DS', 'DB', 'SG', 'FD', 'GD', 'GL']
 
 if "manual_rows" not in st.session_state:
@@ -57,9 +58,6 @@ def clean_df(uploaded_file):
 def available_shift_cols(df):
     return [c for c in SHIFT_ORDER if c in df.columns]
 
-def has_hit(val, nxt_vals):
-    return any(((val + p) % 100) in nxt_vals for p in MASTER_PATTERNS)
-
 def safe_window_default(n):
     options = [1, 3, 7, 10, 15, 30, 45]
     valid = [x for x in options if x <= n]
@@ -77,50 +75,45 @@ def add_accuracy(df_rows):
         out.append(rr)
     return pd.DataFrame(out)
 
-def build_all_history(df_part, shifts):
-    success_history = []
-    backtest_rows = []
-    seq_counter = Counter()
-    tier_rows = []
+def last_valid_value(df_part, col):
+    tmp = df_part[['DATE', col]].copy()
+    tmp[col] = pd.to_numeric(tmp[col], errors='coerce')
+    tmp = tmp.dropna(subset=[col])
+    if len(tmp) == 0:
+        return None, None
+    r = tmp.iloc[-1]
+    return int(r[col]), r['DATE'].date()
+
+def build_backtest(df_part, shifts):
+    rows = []
+    per_shift_vals = {sh: [] for sh in shifts}
+    per_shift_hits = {sh: Counter() for sh in shifts}
+    per_shift_miss = {sh: Counter() for sh in shifts}
 
     for i in range(len(df_part)):
         cur = df_part.iloc[i]
         nxt = df_part.iloc[i + 1] if i + 1 < len(df_part) else None
-
-        if nxt is not None:
-            cur_vals = pd.to_numeric(cur[shifts], errors='coerce').dropna().astype(int).tolist()
-            nxt_vals = pd.to_numeric(nxt[shifts], errors='coerce').dropna().astype(int).tolist()
-            nxt_set = set(nxt_vals)
-
-            found_patterns = []
-            for v in set(cur_vals):
-                for p in MASTER_PATTERNS[:20]:
-                    if (v + p) % 100 in nxt_set:
-                        found_patterns.append(p)
-            found_patterns = list(dict.fromkeys(found_patterns))
-            success_history.append(found_patterns)
-
-            for combo_size in [1, 2, 3]:
-                if len(found_patterns) >= combo_size:
-                    for combo in combinations(sorted(found_patterns), combo_size):
-                        for n in nxt_vals:
-                            seq_counter[(combo, n)] += 1
-        else:
-            success_history.append([])
 
         row = {"DATE": cur["DATE"].date()}
         pass_count = 0
         fail_count = 0
 
         if nxt is not None:
-            nxt_set = set(pd.to_numeric(nxt[shifts], errors='coerce').dropna().astype(int).tolist())
+            nxt_vals = pd.to_numeric(nxt[shifts], errors='coerce').dropna().astype(int).tolist()
+            nxt_set = set(nxt_vals)
+
             for sh in SHIFT_ORDER:
                 if sh in shifts and pd.notna(cur[sh]):
                     val = int(cur[sh])
-                    hit = has_hit(val, nxt_set)
+                    per_shift_vals[sh].append(val)
+                    hit = any(((val + p) % 100) in nxt_set for p in range(100))
                     row[sh] = f"{val} ✅" if hit else f"{val} ❌"
-                    pass_count += 1 if hit else 0
-                    fail_count += 0 if hit else 1
+                    if hit:
+                        pass_count += 1
+                        per_shift_hits[sh][val] += 1
+                    else:
+                        fail_count += 1
+                        per_shift_miss[sh][val] += 1
                 else:
                     row[sh] = ""
         else:
@@ -129,72 +122,49 @@ def build_all_history(df_part, shifts):
 
         row["PASS"] = pass_count
         row["FAIL"] = fail_count
-        backtest_rows.append(row)
+        rows.append(row)
 
-    for rank, ((combo, num), count) in enumerate(seq_counter.most_common(20), start=1):
-        tier_rows.append({"Tier": f"Tier {rank}", "Combo": str(combo), "Generated": num, "Hits": count})
+    return add_accuracy(rows), per_shift_vals, per_shift_hits, per_shift_miss
 
-    return success_history, add_accuracy(backtest_rows), pd.DataFrame(tier_rows), seq_counter
+def pool_analysis(per_shift_vals):
+    all_values = []
+    for sh in per_shift_vals:
+        all_values.extend([int(x) % 100 for x in per_shift_vals[sh]])
 
-def build_shift_history(df_part, shift, available_shifts):
-    success_history = []
+    freq = Counter(all_values)
+    unique_nums = sorted([n for n, c in freq.items() if c == 1])
+    common_nums = sorted([n for n, c in freq.items() if c > 1])
+    remainder_nums = sorted([n for n in range(100) if n not in set(freq.keys())])
+
+    shift_summary = []
+    for sh in per_shift_vals:
+        vals = [int(x) % 100 for x in per_shift_vals[sh]]
+        u = sum(1 for x in vals if freq[x] == 1)
+        c = sum(1 for x in vals if freq[x] > 1)
+        r = sum(1 for x in vals if x in remainder_nums)
+        shift_summary.append({
+            "Shift": sh,
+            "Total": len(vals),
+            "Unique": u,
+            "Common": c,
+            "Remainder": r
+        })
+
+    prob_df = pd.DataFrame([
+        {"Number": n, "Count": c, "Probability %": round((c / len(all_values)) * 100, 2)}
+        for n, c in freq.most_common(100)
+    ])
+
+    return pd.DataFrame(shift_summary), pd.DataFrame({"Number": unique_nums}), pd.DataFrame({"Number": common_nums}), pd.DataFrame({"Number": remainder_nums}), prob_df, freq
+
+def top_shift_for_groups(per_shift_vals, group_nums):
     rows = []
-    seq_counter = Counter()
-    tier_rows = []
-
-    for i in range(len(df_part)):
-        cur = df_part.iloc[i]
-        nxt = df_part.iloc[i + 1] if i + 1 < len(df_part) else None
-
-        cur_val_s = pd.to_numeric(pd.Series([cur[shift]]), errors='coerce').dropna()
-
-        if nxt is not None:
-            nxt_vals = pd.to_numeric(nxt.reindex(available_shifts), errors='coerce').dropna().astype(int).tolist()
-            nxt_set = set(nxt_vals)
-
-            if len(cur_val_s) == 0:
-                success_history.append([])
-            else:
-                val = int(cur_val_s.iloc[0])
-                found = [p for p in MASTER_PATTERNS[:20] if (val + p) % 100 in nxt_set]
-                found = list(dict.fromkeys(found))
-                success_history.append(found)
-
-                for combo_size in [1, 2, 3]:
-                    if len(found) >= combo_size:
-                        for combo in combinations(sorted(found), combo_size):
-                            for n in nxt_vals:
-                                seq_counter[(combo, n)] += 1
-
-                hit = has_hit(val, nxt_set)
-                rows.append({
-                    "DATE": cur["DATE"].date(),
-                    shift: f"{val} ✅" if hit else f"{val} ❌",
-                    "PASS": 1 if hit else 0,
-                    "FAIL": 0 if hit else 1
-                })
-        else:
-            success_history.append([])
-            if len(cur_val_s) > 0:
-                val = int(cur_val_s.iloc[0])
-                rows.append({
-                    "DATE": cur["DATE"].date(),
-                    shift: f"{val} ⏺",
-                    "PASS": 0,
-                    "FAIL": 0
-                })
-            else:
-                rows.append({
-                    "DATE": cur["DATE"].date(),
-                    shift: "",
-                    "PASS": 0,
-                    "FAIL": 0
-                })
-
-    for rank, ((combo, num), count) in enumerate(seq_counter.most_common(20), start=1):
-        tier_rows.append({"Tier": f"Tier {rank}", "Combo": str(combo), "Generated": num, "Hits": count})
-
-    return success_history, add_accuracy(rows), pd.DataFrame(tier_rows), seq_counter
+    group_set = set(group_nums)
+    for sh in per_shift_vals:
+        vals = [int(x) % 100 for x in per_shift_vals[sh]]
+        cnt = sum(1 for x in vals if x in group_set)
+        rows.append({"Shift": sh, "Match Count": cnt})
+    return pd.DataFrame(rows).sort_values("Match Count", ascending=False).reset_index(drop=True)
 
 def render_boxes(items, title):
     st.markdown(f"<div class='big-box'><div class='big-box-title'>{title}</div>", unsafe_allow_html=True)
@@ -203,37 +173,6 @@ def render_boxes(items, title):
         with cols[i % 4]:
             st.markdown(f"<div class='small-box'>{txt}</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
-
-def support_box(freq_map):
-    top3 = freq_map.most_common(3)
-    c1, c2, c3 = st.columns(3)
-    if len(top3) > 0:
-        c1.metric("Top 1", str(top3[0][0]), f"{top3[0][1]} Hits")
-    if len(top3) > 1:
-        c2.metric("Top 2", str(top3[1][0]), f"{top3[1][1]} Hits")
-    if len(top3) > 2:
-        c3.metric("Top 3", str(top3[2][0]), f"{top3[2][1]} Hits")
-
-def best_tier_summary(tier_df):
-    if tier_df.empty:
-        return pd.DataFrame()
-    return tier_df.sort_values("Hits", ascending=False).head(5).reset_index(drop=True)
-
-def tier_vs_shift_summary(seq_counter, selected_shift):
-    rows = []
-    items = seq_counter.most_common(20)
-    for rank, ((combo, num), count) in enumerate(items, start=1):
-        rows.append({"Shift": selected_shift, "Tier": f"Tier {rank}", "Combo": str(combo), "Generated": num, "Hits": count})
-    return pd.DataFrame(rows)
-
-def get_last_valid_value(df_part, col):
-    tmp = df_part[['DATE', col]].copy()
-    tmp[col] = pd.to_numeric(tmp[col], errors='coerce')
-    tmp = tmp.dropna(subset=[col])
-    if len(tmp) == 0:
-        return None, None
-    last_row = tmp.iloc[-1]
-    return int(last_row[col]), last_row['DATE'].date()
 
 def mark_rank(i):
     if i == 0:
@@ -244,17 +183,16 @@ def mark_rank(i):
         return "■"
     return "•"
 
-def build_prediction_items_from_last(last_val):
-    preds = []
-    for i, p in enumerate(MASTER_PATTERNS[:20]):
-        val = (last_val + p) % 100
-        preds.append(f"{mark_rank(i)} {val} | P{i+1} ({p})")
-    return preds
+def build_prediction_from_numbers(nums):
+    out = []
+    for i, n in enumerate(nums[:20]):
+        out.append(f"{mark_rank(i)} {n}")
+    return out
 
 uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'], key="data_uploader")
 
 if not uploaded_file:
-    st.info("Sidebar में अपनी डेटा फाइल अपलोड करें।")
+    st.info("Sidebar में file upload करें.")
     st.stop()
 
 df, err = clean_df(uploaded_file)
@@ -263,7 +201,7 @@ if err:
     st.stop()
 
 shifts_present = available_shift_cols(df)
-if len(shifts_present) == 0:
+if not shifts_present:
     st.error("No shift columns found.")
     st.stop()
 
@@ -271,12 +209,9 @@ for c in shifts_present:
     df[c] = pd.to_numeric(df[c], errors='coerce')
 
 unique_dates = sorted(df['DATE'].dt.date.unique().tolist())
-if not unique_dates:
-    st.error("No valid dates found.")
-    st.stop()
 
 st.sidebar.header("⚙️ Mode")
-mode = st.sidebar.selectbox("Select Mode", ["All Code", "Shift Wise"], index=0, key="mode_select")
+mode = st.sidebar.selectbox("Select Mode", ["All Code", "Shift Wise"], key="mode_select")
 
 st.sidebar.header("📅 Prediction Date")
 prediction_date = st.sidebar.selectbox("Select Prediction Date", unique_dates, index=len(unique_dates)-1, key="pred_date")
@@ -300,76 +235,84 @@ else:
     start_date = unique_dates[start_idx]
     end_date = prediction_date
 
-st.success(f"Selected prediction date: {prediction_date} | History range: {start_date} to {end_date}")
-
 df_range = df[(df['DATE'].dt.date >= start_date) & (df['DATE'].dt.date <= end_date)].copy().reset_index(drop=True)
-if len(df_range) < 1:
+if df_range.empty:
     st.error("Selected range में data नहीं है.")
     st.stop()
 
+st.success(f"Selected prediction date: {prediction_date} | History range: {start_date} to {end_date}")
+
 def render_all_code():
     st.header("📊 All Code Analysis")
-    success_history, backtest_df, tier_df, seq_counter = build_all_history(df_range, shifts_present)
+    backtest_df, per_shift_vals, per_shift_hits, per_shift_miss = build_backtest(df_range, shifts_present)
 
-    window_options = [1, 3, 7, 10, 15, 30, 45]
-    default_window = safe_window_default(len(success_history))
-    window = st.sidebar.select_slider("Select Days", options=window_options, value=default_window, key="all_window")
+    shift_summary, unique_df, common_df, remainder_df, prob_df, freq = pool_analysis(per_shift_vals)
 
-    recent_data = success_history[-window:] if window <= len(success_history) else success_history
-    flat = [p for sub in recent_data for p in sub]
-    freq_map = Counter(flat)
-    support_box(freq_map)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Unique Count", len(unique_df))
+    c2.metric("Common Count", len(common_df))
+    c3.metric("Remainder Count", len(remainder_df))
 
-    st.markdown("### 4-Tier Matching")
-    st.dataframe(tier_df, use_container_width=True, height=240, hide_index=True)
+    st.markdown("### Shift Wise Group Contribution")
+    st.dataframe(shift_summary, use_container_width=True, hide_index=True)
 
-    st.markdown("### Best Tier Summary")
-    st.dataframe(best_tier_summary(tier_df), use_container_width=True, height=180, hide_index=True)
+    st.markdown("### Backtest History")
+    st.dataframe(backtest_df, use_container_width=True, height=380, hide_index=True)
 
-    st.markdown("### ✅ Backtest History")
-    st.dataframe(backtest_df, use_container_width=True, height=420, hide_index=True)
+    st.markdown("### Unique / Common / Remainder")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.write("Unique")
+        st.dataframe(unique_df, use_container_width=True, height=220, hide_index=True)
+    with col2:
+        st.write("Common")
+        st.dataframe(common_df, use_container_width=True, height=220, hide_index=True)
+    with col3:
+        st.write("Remainder")
+        st.dataframe(remainder_df, use_container_width=True, height=220, hide_index=True)
 
-    if len(success_history) > 0:
-        last_ps = success_history[-1]
-        seq_preds = [nxt for (prev, nxt), count in seq_counter.most_common(20) if set(prev).issubset(set(last_ps))]
-        final_unique = list(dict.fromkeys(seq_preds))[:20]
-        render_boxes([f"{mark_rank(i)} {x}" for i, x in enumerate(final_unique)], "Current Prediction")
+    st.markdown("### Probability / Frequency")
+    st.dataframe(prob_df, use_container_width=True, height=260, hide_index=True)
+
+    if len(prob_df) > 0:
+        top_numbers = prob_df.head(20)["Number"].tolist()
+        render_boxes(build_prediction_from_numbers(top_numbers), "Top 20 Probability Numbers")
+
+    if len(unique_df) > 0:
+        top_shift_unique = top_shift_for_groups(per_shift_vals, unique_df["Number"].tolist())
+        st.markdown("### Which Shift Has Most Unique Numbers")
+        st.dataframe(top_shift_unique, use_container_width=True, hide_index=True)
+
+    if len(common_df) > 0:
+        top_shift_common = top_shift_for_groups(per_shift_vals, common_df["Number"].tolist())
+        st.markdown("### Which Shift Has Most Common Numbers")
+        st.dataframe(top_shift_common, use_container_width=True, hide_index=True)
+
+    if len(remainder_df) > 0:
+        top_shift_rem = top_shift_for_groups(per_shift_vals, remainder_df["Number"].tolist())
+        st.markdown("### Which Shift Has Most Remainder Numbers")
+        st.dataframe(top_shift_rem, use_container_width=True, hide_index=True)
 
 def render_shift_wise():
     st.header("📊 Shift Wise Analysis")
-    selected_shift = st.selectbox("Select Shift", shifts_present, index=0, key="shift_select")
+    selected_shift = st.selectbox("Select Shift", shifts_present, key="shift_select")
+    backtest_df, per_shift_vals, per_shift_hits, per_shift_miss = build_backtest(df_range, shifts_present)
+    shift_summary, unique_df, common_df, remainder_df, prob_df, freq = pool_analysis(per_shift_vals)
 
-    success_history, shift_df, tier_df, seq_counter = build_shift_history(df_range, selected_shift, shifts_present)
+    st.markdown(f"### Backtest History - {selected_shift}")
+    st.dataframe(backtest_df, use_container_width=True, height=380, hide_index=True)
 
-    window_options = [1, 3, 7, 10, 15, 30, 45]
-    default_window = safe_window_default(len(success_history))
-    window = st.sidebar.select_slider("Select Days", options=window_options, value=default_window, key="shift_window")
+    last_val, last_date = last_valid_value(df_range, selected_shift)
+    if last_val is not None:
+        st.caption(f"Last valid {selected_shift}: {last_val} on {last_date}")
+        render_boxes(build_prediction_from_numbers([(last_val + i) % 100 for i in range(20)]), f"Current Shift Prediction - {selected_shift}")
 
-    recent_data = success_history[-window:] if window <= len(success_history) else success_history
-    flat = [p for sub in recent_data for p in sub]
-    freq_map = Counter(flat)
-    support_box(freq_map)
+    st.markdown("### Probability / Frequency")
+    st.dataframe(prob_df, use_container_width=True, height=260, hide_index=True)
 
-    st.markdown(f"### 4-Tier Matching - {selected_shift}")
-    st.dataframe(tier_df, use_container_width=True, height=240, hide_index=True)
-
-    st.markdown("### Best Tier Summary")
-    st.dataframe(best_tier_summary(tier_df), use_container_width=True, height=180, hide_index=True)
-
-    st.markdown(f"### ✅ Backtest History - {selected_shift}")
-    st.dataframe(shift_df, use_container_width=True, height=420, hide_index=True)
-
-    st.markdown("### Which Tier Passes More")
-    st.dataframe(tier_vs_shift_summary(seq_counter, selected_shift), use_container_width=True, height=220, hide_index=True)
-
-    last_val, last_date = get_last_valid_value(df_range, selected_shift)
-    if last_val is None:
-        st.warning("No valid latest value.")
-        return
-
-    st.caption(f"Last valid {selected_shift}: {last_val} on {last_date}")
-    pred_items = build_prediction_items_from_last(last_val)
-    render_boxes(pred_items, "Current Shift Prediction")
+uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'], key="data_uploader")
+if not uploaded_file:
+    st.stop()
 
 if mode == "All Code":
     render_all_code()
