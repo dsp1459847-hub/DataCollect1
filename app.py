@@ -6,10 +6,10 @@ from itertools import combinations
 st.set_page_config(page_title="Jackpot Pattern AI", layout="wide")
 
 st.title("🏆 Monthly & Weekly Jackpot Pattern Analyzer")
-st.write("शॉर्ट-टर्म और लॉन्ग-टर्म डेटा से pattern analysis, backtest, और prediction.")
+st.write("शॉर्ट-टर्म और लॉन्ग-टर्म डेटा से pattern analysis, backtest, tier matching, और prediction.")
 
 MASTER_PATTERNS = [0, -18, -16, -26, -32, -1, -4, -11, -15, -10, -51, -50, 15, 5, -5, -55, 1, 10, 11, 51, 55, -40]
-SHIFT_ORDER = ['DS', 'DB', 'SG', 'FD', 'GB', 'GL']
+SHIFT_ORDER = ['DS', 'DB', 'SG', 'FD', 'GD', 'GL']
 
 def clean_df(uploaded_file):
     if uploaded_file.name.endswith('.csv'):
@@ -51,6 +51,7 @@ def build_all_history(df_part, shifts):
     success_history = []
     backtest_rows = []
     seq_counter = Counter()
+    tier_rows = []
 
     for i in range(len(df_part) - 1):
         cur = df_part.iloc[i]
@@ -58,11 +59,10 @@ def build_all_history(df_part, shifts):
 
         cur_vals = pd.to_numeric(cur[shifts], errors='coerce').dropna().astype(int).tolist()
         nxt_vals = pd.to_numeric(nxt[shifts], errors='coerce').dropna().astype(int).tolist()
-        cur_set = set(cur_vals)
         nxt_set = set(nxt_vals)
 
         found_patterns = []
-        for v in cur_set:
+        for v in set(cur_vals):
             for p in MASTER_PATTERNS:
                 if (v + p) % 100 in nxt_set:
                     found_patterns.append(p)
@@ -78,6 +78,7 @@ def build_all_history(df_part, shifts):
         row = {"DATE": cur["DATE"].date()}
         pass_count = 0
         fail_count = 0
+
         for sh in SHIFT_ORDER:
             if sh in shifts and pd.notna(cur[sh]):
                 val = int(cur[sh])
@@ -87,16 +88,26 @@ def build_all_history(df_part, shifts):
                 fail_count += 0 if hit else 1
             else:
                 row[sh] = ""
+
         row["PASS"] = pass_count
         row["FAIL"] = fail_count
         backtest_rows.append(row)
 
-    return success_history, add_accuracy(backtest_rows), seq_counter
+    for rank, ((combo, num), count) in enumerate(seq_counter.most_common(20), start=1):
+        tier_rows.append({
+            "Tier": f"Tier {rank}",
+            "Combo": str(combo),
+            "Generated": num,
+            "Hits": count
+        })
+
+    return success_history, add_accuracy(backtest_rows), pd.DataFrame(tier_rows), seq_counter
 
 def build_shift_history(df_part, shift, available_shifts):
     success_history = []
     rows = []
     seq_counter = Counter()
+    tier_rows = []
 
     for i in range(len(df_part) - 1):
         cur = df_part.iloc[i]
@@ -129,7 +140,52 @@ def build_shift_history(df_part, shift, available_shifts):
             "FAIL": 0 if hit else 1
         })
 
-    return success_history, add_accuracy(rows), seq_counter
+    for rank, ((combo, num), count) in enumerate(seq_counter.most_common(20), start=1):
+        tier_rows.append({
+            "Tier": f"Tier {rank}",
+            "Combo": str(combo),
+            "Generated": num,
+            "Hits": count
+        })
+
+    return success_history, add_accuracy(rows), pd.DataFrame(tier_rows), seq_counter
+
+def support_box(freq_map):
+    top3 = freq_map.most_common(3)
+    c1, c2, c3 = st.columns(3)
+    if len(top3) > 0:
+        c1.metric("Top 1", str(top3[0][0]), f"{top3[0][1]} Hits")
+    if len(top3) > 1:
+        c2.metric("Top 2", str(top3[1][0]), f"{top3[1][1]} Hits")
+    if len(top3) > 2:
+        c3.metric("Top 3", str(top3[2][0]), f"{top3[2][1]} Hits")
+
+    if len(freq_map) > 3:
+        rest = pd.DataFrame(freq_map.most_common()[3:], columns=["Pattern", "Hits"])
+        st.markdown("### बाकी patterns")
+        st.dataframe(rest, use_container_width=True, height=160, hide_index=True)
+
+def best_tier_summary(tier_df):
+    if tier_df.empty:
+        return pd.DataFrame()
+    return tier_df.sort_values("Hits", ascending=False).head(5).reset_index(drop=True)
+
+def tier_vs_shift_summary(seq_counter, selected_shift):
+    rows = []
+    items = seq_counter.most_common(20)
+    for rank, ((combo, num), count) in enumerate(items, start=1):
+        rows.append({
+            "Shift": selected_shift,
+            "Tier": f"Tier {rank}",
+            "Combo": str(combo),
+            "Generated": num,
+            "Hits": count
+        })
+    return pd.DataFrame(rows)
+
+def show_prediction_box(numbers):
+    st.markdown("### 🔮 Prediction Box")
+    st.dataframe(pd.DataFrame({"Generated Number": numbers}), use_container_width=True, height=180, hide_index=True)
 
 uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=['csv', 'xlsx'])
 
@@ -192,24 +248,9 @@ if len(df_range) < 2:
     st.error("Selected range में पर्याप्त data नहीं है.")
     st.stop()
 
-def show_prediction_box(numbers):
-    st.subheader("🔮 Prediction")
-    pred_df = pd.DataFrame({"Generated Number": numbers})
-    st.dataframe(pred_df, use_container_width=True, height=180, hide_index=True)
-
-def render_top_box(freq_map):
-    top_3 = freq_map.most_common(3)
-    c1, c2, c3 = st.columns(3)
-    if len(top_3) > 0:
-        c1.metric("Top 1", str(top_3[0][0]), f"{top_3[0][1]} Hits")
-    if len(top_3) > 1:
-        c2.metric("Top 2", str(top_3[1][0]), f"{top_3[1][1]} Hits")
-    if len(top_3) > 2:
-        c3.metric("Top 3", str(top_3[2][0]), f"{top_3[2][1]} Hits")
-
 def render_all_code():
     st.header("📊 All Code Analysis")
-    success_history, backtest_df, seq_counter = build_all_history(df_range, shifts_present)
+    success_history, backtest_df, tier_df, seq_counter = build_all_history(df_range, shifts_present)
 
     window_options = [1, 3, 7, 10, 15, 30, 45]
     default_window = safe_window_default(len(success_history))
@@ -218,10 +259,17 @@ def render_all_code():
     recent_data = success_history[-window:] if window <= len(success_history) else success_history
     flat = [p for sub in recent_data for p in sub]
     freq_map = Counter(flat)
-    render_top_box(freq_map)
 
-    st.subheader("✅ Backtest History")
-    st.dataframe(backtest_df, use_container_width=True, height=520)
+    support_box(freq_map)
+
+    st.markdown("### 4-Tier Matching")
+    st.dataframe(tier_df, use_container_width=True, height=240, hide_index=True)
+
+    st.markdown("### Best Tier Summary")
+    st.dataframe(best_tier_summary(tier_df), use_container_width=True, height=180, hide_index=True)
+
+    st.markdown("### ✅ Backtest History")
+    st.dataframe(backtest_df, use_container_width=True, height=420, hide_index=True)
 
     last_ps = success_history[-1]
     seq_preds = [nxt for (prev, nxt), count in seq_counter.most_common(50) if set(prev).issubset(set(last_ps))]
@@ -232,7 +280,7 @@ def render_shift_wise():
     st.header("📊 Shift Wise Analysis")
     selected_shift = st.selectbox("Select Shift", shifts_present, index=0)
 
-    success_history, shift_df, seq_counter = build_shift_history(df_range, selected_shift, shifts_present)
+    success_history, shift_df, tier_df, seq_counter = build_shift_history(df_range, selected_shift, shifts_present)
 
     window_options = [1, 3, 7, 10, 15, 30, 45]
     default_window = safe_window_default(len(success_history))
@@ -241,10 +289,20 @@ def render_shift_wise():
     recent_data = success_history[-window:] if window <= len(success_history) else success_history
     flat = [p for sub in recent_data for p in sub]
     freq_map = Counter(flat)
-    render_top_box(freq_map)
 
-    st.subheader(f"✅ Backtest History - {selected_shift}")
-    st.dataframe(shift_df, use_container_width=True, height=520)
+    support_box(freq_map)
+
+    st.markdown(f"### 4-Tier Matching - {selected_shift}")
+    st.dataframe(tier_df, use_container_width=True, height=240, hide_index=True)
+
+    st.markdown("### Best Tier Summary")
+    st.dataframe(best_tier_summary(tier_df), use_container_width=True, height=180, hide_index=True)
+
+    st.markdown(f"### ✅ Backtest History - {selected_shift}")
+    st.dataframe(shift_df, use_container_width=True, height=420, hide_index=True)
+
+    st.markdown("### Which Tier Passes More")
+    st.dataframe(tier_vs_shift_summary(seq_counter, selected_shift), use_container_width=True, height=220, hide_index=True)
 
     last_val_s = pd.to_numeric(pd.Series([df_range.iloc[-1][selected_shift]]), errors='coerce').dropna()
     if len(last_val_s) == 0:
