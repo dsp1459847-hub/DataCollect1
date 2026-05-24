@@ -70,7 +70,7 @@ def get_rashi_family(number):
     Formula: R(d) = (d + 5) mod 10
     """
     if pd.isna(number):
-        return
+        return list()
     val = int(number)
     t = val // 10
     u = val % 10
@@ -78,12 +78,13 @@ def get_rashi_family(number):
     rt = RASHI_MAP[t]
     ru = RASHI_MAP[u]
     
-    base_family = [
+    # Safe list creation without brackets
+    base_family = list((
         10 * t + u,
         10 * t + ru,
         10 * rt + u,
         10 * rt + ru
-    ]
+    ))
     
     expanded_set = set()
     for num in base_family:
@@ -97,7 +98,8 @@ def get_rashi_family(number):
 def get_mode(lst):
     if not lst:
         return None
-    return Counter(lst).most_common(1)
+    most_common_result = Counter(lst).most_common(1)
+    return most_common_result
 
 # ---------------------------------------------------------
 # DEFAULT TEST DATA GENERATION (IF NO FILE UPLOADED)
@@ -108,7 +110,7 @@ def get_default_data():
     np.random.seed(42)
     dates = pd.date_range(start="2020-01-01", end="2026-05-24", freq='D')
     data = {
-        'S. NUMBER': range(1, len(dates) + 1),
+        'S. NUMBER': list(range(1, len(dates) + 1)),
         'DATE': dates,
         'DS': np.random.choice([np.nan, 'XX', '15', '26', '42', '80', '94', '53', '77', '18', '03', '11'], size=len(dates)),
         'FD': np.random.choice([np.nan, 'XX', '17', '65', '79', '25', '62', '83', '38', '11', '90', '04'], size=len(dates)),
@@ -138,9 +140,10 @@ class SattaPredictiveEngine:
                 self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
 
     def run_prediction(self, target_date, shift, top_n_jodis):
-        # 1. Filter historical data up to Target Date (Pandas Syntax fully corrected!)
+        # 1. Filter historical data up to Target Date (Using safe boolean masking)
         target_dt = pd.to_datetime(target_date)
-        hist_df = self.df <= target_dt].sort_values(by='DATE')
+        date_mask = self.df <= target_dt
+        hist_df = self.df.loc[date_mask].sort_values(by='DATE')
         
         if hist_df.empty:
             return None
@@ -156,9 +159,9 @@ class SattaPredictiveEngine:
         # ---------------------------------------------------------
         # A. SARPANCH CONSENSUS ALGORITHM
         # ---------------------------------------------------------
-        sarpanch_history =
+        sarpanch_history = list()
         for idx, row in hist_df.iterrows():
-            day_digits =
+            day_digits = list()
             for col in CHANNELS:
                 if col in hist_df.columns:
                     val = row[col]
@@ -171,7 +174,8 @@ class SattaPredictiveEngine:
                 if mode_res is not None:
                     sarpanch_history.append(mode_res)
                 
-        sarpanch_series = [x for x in sarpanch_history if x is not None]
+        # Safe filter without list comprehension
+        sarpanch_series = list(filter(lambda x: x is not None, sarpanch_history))
         predicted_sarpanch = 5  # default fallback
         
         if len(sarpanch_series) >= 5:
@@ -224,7 +228,7 @@ class SattaPredictiveEngine:
         # ---------------------------------------------------------
         gap_scores = np.zeros(100)
         last_seen = {}
-        all_gaps = {i: for i in range(100)}
+        all_gaps = {i: list() for i in range(100)}
         
         for idx, val in enumerate(series):
             val = int(val)
@@ -264,14 +268,14 @@ class SattaPredictiveEngine:
         top_jodis = ranked_indices[:top_n_jodis]
         
         # Calculate Single Haruf based on constituent digits of top ranked Jodis
-        haruf_candidates =
+        haruf_candidates = list()
         for num in ranked_indices[:15]: # check top 15 candidates for high precision
             haruf_candidates.append((num // 10, 'Andar'))
             haruf_candidates.append((num % 10, 'Bahar'))
             
         # Group by digit to see which has the highest overall activation
         digit_weights = {}
-        digit_sides = {i: for i in range(10)}
+        digit_sides = {i: list() for i in range(10)}
         for digit, side in haruf_candidates:
             digit_weights[digit] = digit_weights.get(digit, 0) + 1
             digit_sides[digit].append(side)
@@ -283,12 +287,17 @@ class SattaPredictiveEngine:
         # Confidence metric calculations corrected
         confidence_val = min(int((final_scores[top_jodis].sum() / (final_scores[ranked_indices[:15]].sum() + 1e-5)) * 95), 98)
 
+        # Convert top_jodis to formatted string list safely
+        formatted_jodis = list()
+        for j in top_jodis:
+            formatted_jodis.append(f"{j:02d}")
+
         return {
             'target_date': target_date,
             'prediction_date': (pd.to_datetime(target_date) + pd.DateOffset(days=1)).strftime('%Y-%m-%d'),
             'last_val': f"{last_val:02d}",
             'sarpanch': predicted_sarpanch,
-            'jodis': [f"{j:02d}" for j in top_jodis],
+            'jodis': formatted_jodis,
             'haruf': primary_haruf,
             'haruf_side': best_side,
             'confidence': confidence_val
@@ -326,7 +335,7 @@ if 'DATE' not in raw_df.columns:
 else:
     # Safely parse DATE column on the series level
     raw_df = pd.to_datetime(raw_df, errors='coerce')
-    raw_df = raw_df.dropna(subset=).sort_values(by='DATE')
+    raw_df = raw_df.dropna(subset=list()).sort_values(by='DATE')
     
     # Initialize Engine
     engine = SattaPredictiveEngine(raw_df)
@@ -334,15 +343,19 @@ else:
     # Control Options
     st.sidebar.header("⚙️ एल्गोरिदम सेटिंग्स")
     
-    # Target Shift - Only show actual channels present in the sheet
-    available_shifts =
+    # Target Shift - Only show actual channels present in the sheet (Avoiding List Comprehension)
+    available_shifts = list()
+    for col in CHANNELS:
+        if col in raw_df.columns:
+            available_shifts.append(col)
+            
     if not available_shifts:
          available_shifts = CHANNELS
          
     selected_shift = st.sidebar.selectbox("🎯 शिफ्ट (Shift/Channel) चुनें:", available_shifts)
     
-    # Target Date selection
-    all_dates = raw_df.dt.strftime('%Y-%m-%d').tolist()
+    # Target Date selection (Drop duplicates dynamically)
+    all_dates = raw_df.dt.strftime('%Y-%m-%d').drop_duplicates().tolist()
     selected_date = st.sidebar.selectbox(
         "📅 दिनांक (Target Date) चुनें:", 
         all_dates, 
@@ -396,9 +409,13 @@ else:
                     st.subheader(f"🔮  अनुमानित जोड़ियाँ (Top {jodi_count} Jodis - Just {jodi_count}%)")
                     st.write("अत्यधिक गणितीय गणनाओं के आधार पर चुनिंदा जोड़ियाँ:")
                     
-                    jodi_html = "".join([f'<div class="jodi-box">{jodi}</div>' for jodi in results['jodis']])
-                    st.markdown(jodi_html, unsafe_allow_html=True)
+                    # Safe HTML generation
+                    jodi_html_list = list()
+                    for jodi in results['jodis']:
+                        jodi_html_list.append(f'<div class="jodi-box">{jodi}</div>')
+                    jodi_html = "".join(jodi_html_list)
                     
+                    st.markdown(jodi_html, unsafe_allow_html=True)
                     st.info(f"💡 केवल {jodi_count} जोड़ियाँ दी गई हैं, जो कुल 100 जोड़ियों में से मात्र {jodi_count}% हैं। यह आपके रिस्क को न्यूनतम और मुनाफ़े को अधिकतम करता है।")
                     st.markdown('</div>', unsafe_allow_html=True)
                     
@@ -406,9 +423,8 @@ else:
                 with st.expander("🛠️ जानिए इस गणना के पीछे का गणित (Algorithm Secrets)"):
                     st.write("यह भविष्यवाणी किसी तुक्के पर नहीं, बल्कि निम्नलिखित 4 वैज्ञानिक मॉडलों के मिश्रण से की गई है:")
                     st.markdown(f"""
-                    1. **मार्कोव संक्रमण आव्यूह (Markov Transition Probability):** अंतिम बार आई जोड़ी `{results['last_val']}` से अगले दिन आने वाली संख्याओं के ऐतिहासिक संक्रमण पैटर्न का विश्लेषण किया गया.
-                    2. **विस्तारित राशि समूह (Extended Rashi Family Chart):** जोड़ी `{results['last_val']}` के विस्तारित 8-संख्याओं के रशी परिवार की वर्तमान सक्रियता का मूल्यांकन किया गया.
-                    3. **अंतराल गतिशीलता (Gap Z-Score Analysis):** कौन सी जोड़ी अपने चक्र से सबसे ज्यादा 'अतिदेय' (Overdue) चल रही है, उसकी गणना जेड-क्कोर के माध्यम से की गई:
-                       $$Z = \\frac{{G - \\mu}}{{\\sigma}}$$
-                    4. **सरपंच फ़िल्टर (Sarpanch Mode Filter):** आज के दिन का सामूहिक सरपंच अंक `{results['sarpanch']}` निकाला गया, और इस अंक वाली जोड़ियों को 30% अतिरिक्त वेटेज दिया गया.
+                    1. **मार्कोव संक्रमण आव्यूह (Markov Transition Probability):** अंतिम बार आई जोड़ी `{results['last_val']}` से अगले दिन आने वाली संख्याओं के ऐतिहासिक संक्रमण पैटर्न का विश्लेषण किया गया. [1, 2]
+                    2. **विस्तारित राशि समूह (Extended Rashi Family Chart):** जोड़ी `{results['last_val']}` के विस्तारित 8-संख्याओं के रशी परिवार की वर्तमान सक्रियता का मूल्यांकन किया गया. [3]
+                    3. **अंतराल गतिशीलता (Gap Z-Score Analysis):** कौन सी जोड़ी अपने चक्र से सबसे ज्यादा 'अतिदेय' (Overdue) चल रही है, उसकी गणना जेड-क्कोर के माध्यम से की गई.
+                    4. **सरपंच फ़िल्टर (Sarpanch Mode Filter):** आज के दिन का सामूहिक सरपंच अंक `{results['sarpanch']}` निकाला गया, और इस अंक वाली जोड़ियों को 30% अतिरिक्त वेटेज दिया गया. [4]
                     """)
