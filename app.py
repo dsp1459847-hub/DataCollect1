@@ -91,7 +91,7 @@ def build_chain(df, shifts):
             chain.append([])
     return chain
 
-def score_frequency(chain):
+def score_numbers(chain):
     flat = [x for row in chain for x in row]
     return Counter(flat)
 
@@ -100,10 +100,8 @@ def evaluate_window(df, shifts, window):
     if len(sub) < 2:
         return 0
     chain = build_chain(sub, shifts)
-    freq = score_frequency(chain)
-    if not chain:
-        return 0
-    recent = chain[-1] if chain[-1] else []
+    freq = score_numbers(chain)
+    recent = chain[-1] if chain else []
     score = len(recent) * 10
     score += sum(c for n, c in freq.most_common(5))
     score += len(freq)
@@ -126,7 +124,7 @@ def predict_for_shift(df, shift, window):
         return []
     sub = df.tail(min(window, len(df))).copy()
     chain = build_chain(sub, [shift])
-    freq = score_frequency(chain)
+    freq = score_numbers(chain)
     latest = chain[-1] if chain else []
     result = []
     for x in latest:
@@ -147,13 +145,49 @@ def build_backtest(df, shifts, window):
     rows = []
     for s in shifts:
         chain = build_chain(sub, [s])
-        freq = score_frequency(chain)
+        freq = score_numbers(chain)
         rows.append({
             "Shift": s,
             "Top 5 Frequencies": freq.most_common(5),
             "Latest Hits": chain[-1] if chain else [],
         })
     return pd.DataFrame(rows)
+
+def analyze_predictions(pred_map):
+    rows = []
+    all_flat = []
+    shift_top = []
+
+    for shift, nums in pred_map.items():
+        nums = [int(n) % 100 for n in nums if str(n).isdigit() or isinstance(n, int)]
+        unique_nums = list(dict.fromkeys(nums))
+        all_flat.extend(unique_nums)
+        rows.append({
+            "Shift": shift,
+            "Count": len(unique_nums),
+            "Numbers": unique_nums
+        })
+
+        c = Counter(nums)
+        top_num, top_cnt = c.most_common(1)[0] if c else (None, 0)
+        shift_top.append({
+            "Shift": shift,
+            "Top Number": top_num,
+            "Top Count": top_cnt
+        })
+
+    uniq_counter = Counter(all_flat)
+    uniq_sorted = sorted(uniq_counter.items(), key=lambda x: (-x[1], x[0]))
+    present_numbers = sorted(list(uniq_counter.keys()))
+    missing_numbers = sorted([n for n in range(100) if n not in uniq_counter])
+
+    return (
+        pd.DataFrame(rows),
+        pd.DataFrame(uniq_sorted, columns=["Number", "Total Count"]),
+        present_numbers,
+        missing_numbers,
+        pd.DataFrame(shift_top)
+    )
 
 uploaded_file = st.sidebar.file_uploader("Base Data File Upload Karein", type=["csv", "xlsx"])
 append_file = st.sidebar.file_uploader("Append History File", type=["csv", "xlsx"])
@@ -233,6 +267,24 @@ else:
     pred_nums = predict_for_shift(filtered_df, selected_shift, pred_window)
     st.success(f"{selected_shift} Prediction: {pred_nums}")
     st.session_state["last_prediction"] = pred_nums
+    pred_map = {selected_shift: pred_nums}
+
+shift_summary_df, unique_count_df, present_numbers, missing_numbers, shift_top_df = analyze_predictions(pred_map)
+
+st.subheader("Shift-wise Prediction Summary")
+st.dataframe(shift_summary_df, use_container_width=True)
+
+st.subheader("Unique Prediction Count")
+st.dataframe(unique_count_df, use_container_width=True)
+
+st.subheader("Present Numbers")
+st.write(present_numbers)
+
+st.subheader("Missing Numbers (0-99)")
+st.write(missing_numbers)
+
+st.subheader("Shift-wise Top Number")
+st.dataframe(shift_top_df, use_container_width=True)
 
 st.divider()
 st.header("✅ Backtest")
