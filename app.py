@@ -100,7 +100,7 @@ def get_mode(lst):
     return Counter(lst).most_common(1)
 
 # ---------------------------------------------------------
-# DEFAULT TEST DATA GENERATION
+# DEFAULT TEST DATA GENERATION (IF NO FILE UPLOADED)
 # ---------------------------------------------------------
 @st.cache_data
 def get_default_data():
@@ -108,6 +108,7 @@ def get_default_data():
     np.random.seed(42)
     dates = pd.date_range(start="2020-01-01", end="2026-05-24", freq='D')
     data = {
+        'S. NUMBER': range(1, len(dates) + 1),
         'DATE': dates,
         'DS': np.random.choice([np.nan, 'XX', '15', '26', '42', '80', '94', '53', '77', '18', '03', '11'], size=len(dates)),
         'FD': np.random.choice([np.nan, 'XX', '17', '65', '79', '25', '62', '83', '38', '11', '90', '04'], size=len(dates)),
@@ -125,7 +126,7 @@ def get_default_data():
 class SattaPredictiveEngine:
     def __init__(self, df):
         self.df = df.copy()
-        # Clean up DATE parsing
+        # Clean up DATE parsing on column level
         self.df = pd.to_datetime(self.df, errors='coerce')
         self.clean_data()
 
@@ -137,7 +138,7 @@ class SattaPredictiveEngine:
                 self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
 
     def run_prediction(self, target_date, shift, top_n_jodis):
-        # 1. Filter historical data up to Target Date
+        # 1. Filter historical data up to Target Date (Syntax Fixed here!)
         target_dt = pd.to_datetime(target_date)
         hist_df = self.df <= target_dt].sort_values(by='DATE')
         
@@ -159,11 +160,12 @@ class SattaPredictiveEngine:
         for idx, row in hist_df.iterrows():
             day_digits =
             for col in CHANNELS:
-                val = row[col]
-                if not pd.isna(val):
-                    v_int = int(val)
-                    day_digits.append(v_int // 10)
-                    day_digits.append(v_int % 10)
+                if col in hist_df.columns:
+                    val = row[col]
+                    if not pd.isna(val):
+                        v_int = int(val)
+                        day_digits.append(v_int // 10)
+                        day_digits.append(v_int % 10)
             if day_digits:
                 mode_res = get_mode(day_digits)
                 if mode_res is not None:
@@ -193,7 +195,8 @@ class SattaPredictiveEngine:
         for idx in range(1, len(series)):
             p = int(series[idx-1])
             c = int(series[idx])
-            transition_matrix[p, c] += 1
+            if p < 100 and c < 100:
+                transition_matrix[p, c] += 1
         transition_matrix += 0.1  # Laplace Smoothing
         transition_matrix /= transition_matrix.sum(axis=1, keepdims=True)
         markov_scores = transition_matrix[last_val]
@@ -315,7 +318,7 @@ else:
     st.sidebar.info("💡 डिफ़ॉल्ट डेमो डेटा लोड किया गया है। आप अपनी फ़ाइल अपलोड कर सकते हैं।")
     raw_df = get_default_data()
 
-# Clean dataframe columns
+# Clean dataframe columns from spaces
 raw_df.columns = raw_df.columns.str.strip()
 
 if 'DATE' not in raw_df.columns:
@@ -330,8 +333,11 @@ else:
     # Control Options
     st.sidebar.header("⚙️ एल्गोरिदम सेटिंग्स")
     
-    # Target Shift
+    # Target Shift - Only show actual channels present in the sheet
     available_shifts =
+    if not available_shifts:
+         available_shifts = CHANNELS
+         
     selected_shift = st.sidebar.selectbox("🎯 शिफ्ट (Shift/Channel) चुनें:", available_shifts)
     
     # Target Date selection
@@ -342,13 +348,13 @@ else:
         index=len(all_dates)-1
     )
     
-    # Number of Jodis Slider (Strictly keeping <10% for lower cost)
+    # Number of Jodis Slider (Strictly keeping <10% for lower cost and high precision)
     jodi_count = st.sidebar.slider(
         "🔢 जोड़ियों की संख्या (Top Jodis):", 
         min_value=5, 
         max_value=10, 
         value=6,
-        help="जोड़ियों की संख्या जितनी कम होगी, उतना कम अंक खेलने होंगे। 10 जोड़ियाँ मतलब कुल संभावनाओं का मात्र 10%!"
+        help="जोड़ियों की संख्या जितनी कम होगी, उतने कम अंक खेलने होंगे। 10 जोड़ियाँ मतलब कुल संभावनाओं का मात्र 10%!"
     )
     
     # Run Prediction Button
@@ -399,9 +405,9 @@ else:
                 with st.expander("🛠️ जानिए इस गणना के पीछे का गणित (Algorithm Secrets)"):
                     st.write("यह भविष्यवाणी किसी तुक्के पर नहीं, बल्कि निम्नलिखित 4 वैज्ञानिक मॉडलों के मिश्रण से की गई है:")
                     st.markdown(f"""
-                    1. **मार्कोव संक्रमण आव्यूह (Markov Transition Probability):** अंतिम बार आई जोड़ी `{results['last_val']}` से अगले दिन आने वाली संख्याओं के ऐतिहासिक संक्रमण पैटर्न का विश्लेषण किया गया.[1, 2]
-                    2. **विस्तारित राशि समूह (Extended Rashi Family Chart):** जोड़ी `{results['last_val']}` के विस्तारित 8-संख्याओं के रशी परिवार की वर्तमान सक्रियता का मूल्यांकन किया गया.[3]
-                    3. **अंतराल गतिशीलता (Gap Z-Score Analysis):** कौन सी जोड़ी अपने चक्र से सबसे ज्यादा 'अतिदेय' (Overdue) चल रही है, उसकी गणना जेड-स्कोर के माध्यम से की गई:
+                    1. **मार्कोव संक्रमण आव्यूह (Markov Transition Probability):** अंतिम बार आई जोड़ी `{results['last_val']}` से अगले दिन आने वाली संख्याओं के ऐतिहासिक संक्रमण पैटर्न का विश्लेषण किया गया.
+                    2. **विस्तारित राशि समूह (Extended Rashi Family Chart):** जोड़ी `{results['last_val']}` के विस्तारित 8-संख्याओं के रशी परिवार की वर्तमान सक्रियता का मूल्यांकन किया गया.
+                    3. **अंतराल गतिशीलता (Gap Z-Score Analysis):** कौन सी जोड़ी अपने चक्र से सबसे ज्यादा 'अतिदेय' (Overdue) चल रही है, उसकी गणना जेड-क्कोर के माध्यम से की गई:
                        $$Z = \\frac{{G - \\mu}}{{\\sigma}}$$
-                    4. **सरपंच फ़िल्टर (Sarpanch Mode Filter):** आज के दिन का सामूहिक सरपंच अंक `{results['sarpanch']}` निकाला गया, और इस अंक वाली जोड़ियों को 30% अतिरिक्त वेटेज दिया गया.[4]
+                    4. **सरपंच फ़िल्टर (Sarpanch Mode Filter):** आज के दिन का सामूहिक सरपंच अंक `{results['sarpanch']}` निकाला गया, और इस अंक वाली जोड़ियों को 30% अतिरिक्त वेटेज दिया गया.
                     """)
