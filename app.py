@@ -14,27 +14,27 @@ st.set_page_config(
 # Custom Styling
 st.markdown("""
     <style>
- .main-title {
+.main-title {
         font-size: 38px;
         color: #FFD700;
         text-align: center;
         font-weight: bold;
         margin-bottom: 5px;
     }
- .subtitle {
+.subtitle {
         font-size: 18px;
         color: #A0A0A0;
         text-align: center;
         margin-bottom: 25px;
     }
- .metric-card {
+.metric-card {
         background-color: #1E1E1E;
         padding: 15px;
         border-radius: 10px;
         border-left: 5px solid #FFD700;
         margin: 10px 0px;
     }
- .jodi-box {
+.jodi-box {
         display: inline-block;
         background-color: #FFD700;
         color: #111111;
@@ -45,7 +45,7 @@ st.markdown("""
         border-radius: 5px;
         text-align: center;
     }
- .haruf-box {
+.haruf-box {
         display: inline-block;
         background-color: #00FFCC;
         color: #111111;
@@ -138,7 +138,7 @@ class SattaPredictiveEngine:
                 self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
 
     def run_prediction(self, target_date, shift, top_n_jodis):
-        # 1. Filter historical data up to Target Date (Syntax Fixed here!)
+        # 1. Filter historical data up to Target Date (Pandas Syntax fully corrected!)
         target_dt = pd.to_datetime(target_date)
         hist_df = self.df <= target_dt].sort_values(by='DATE')
         
@@ -324,6 +324,7 @@ raw_df.columns = raw_df.columns.str.strip()
 if 'DATE' not in raw_df.columns:
     st.error("❌ डेटासेट में 'DATE' कॉलम होना अनिवार्य है।")
 else:
+    # Safely parse DATE column on the series level
     raw_df = pd.to_datetime(raw_df, errors='coerce')
     raw_df = raw_df.dropna(subset=).sort_values(by='DATE')
     
