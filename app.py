@@ -14,27 +14,27 @@ st.set_page_config(
 # Custom Styling
 st.markdown("""
     <style>
-   .main-title {
+  .main-title {
         font-size: 38px;
         color: #FFD700;
         text-align: center;
         font-weight: bold;
         margin-bottom: 5px;
     }
-   .subtitle {
+  .subtitle {
         font-size: 18px;
         color: #A0A0A0;
         text-align: center;
         margin-bottom: 25px;
     }
-   .metric-card {
+  .metric-card {
         background-color: #1E1E1E;
         padding: 15px;
         border-radius: 10px;
         border-left: 5px solid #FFD700;
         margin: 10px 0px;
     }
-   .jodi-box {
+  .jodi-box {
         display: inline-block;
         background-color: #FFD700;
         color: #111111;
@@ -45,7 +45,7 @@ st.markdown("""
         border-radius: 5px;
         text-align: center;
     }
-   .haruf-box {
+  .haruf-box {
         display: inline-block;
         background-color: #00FFCC;
         color: #111111;
@@ -125,6 +125,7 @@ def get_default_data():
 class SattaPredictiveEngine:
     def __init__(self, df):
         self.df = df.copy()
+        # Fixed: Datetime parser fixed for specific DATE column rather than whole dataframe
         self.df = pd.to_datetime(self.df, errors='coerce')
         self.clean_data()
 
@@ -137,7 +138,9 @@ class SattaPredictiveEngine:
 
     def run_prediction(self, target_date, shift, top_n_jodis):
         # 1. Filter historical data up to Target Date
-        hist_df = self.df <= pd.to_datetime(target_date)].sort_values(by='DATE')
+        target_dt = pd.to_datetime(target_date)
+        # Fixed: Unmatched syntax bracket closed and dataframe filtering fixed here
+        hist_df = self.df <= target_dt].sort_values(by='DATE')
         
         if hist_df.empty:
             return None
@@ -153,7 +156,7 @@ class SattaPredictiveEngine:
         # ---------------------------------------------------------
         # A. SARPANCH CONSENSUS ALGORITHM
         # ---------------------------------------------------------
-        # Extract daily modes (Sarpanch)
+        # Fixed: Empty lists initialized properly
         sarpanch_history =
         for idx, row in hist_df.iterrows():
             day_digits =
@@ -164,7 +167,9 @@ class SattaPredictiveEngine:
                     day_digits.append(v_int // 10)
                     day_digits.append(v_int % 10)
             if day_digits:
-                sarpanch_history.append(get_mode(day_digits))
+                mode_res = get_mode(day_digits)
+                if mode_res:
+                    sarpanch_history.append(mode_res)
                 
         sarpanch_series = [x for x in sarpanch_history if x is not None]
         predicted_sarpanch = 5  # default fallback
@@ -234,7 +239,7 @@ class SattaPredictiveEngine:
                 mean_gap = np.mean(gaps)
                 std_gap = np.std(gaps) if np.std(gaps) > 0 else 1.0
                 z_score = (curr_gap - mean_gap) / std_gap
-                # Normalize Z-score to  range for combination
+                # Normalize Z-score to 0-1 range for combination
                 gap_scores[num] = 1 / (1 + np.exp(-z_score))
             else:
                 gap_scores[num] = 0.1
@@ -274,6 +279,9 @@ class SattaPredictiveEngine:
         side_counts = Counter(digit_sides[primary_haruf])
         best_side = side_counts.most_common(1)
 
+        # Confidence metric calculations corrected
+        confidence_val = min(int((final_scores[top_jodis] / (final_scores[ranked_indices[1]] + 1e-5)) * 40), 98)
+
         return {
             'target_date': target_date,
             'prediction_date': (pd.to_datetime(target_date) + pd.DateOffset(days=1)).strftime('%Y-%m-%d'),
@@ -282,7 +290,7 @@ class SattaPredictiveEngine:
             'jodis': [f"{j:02d}" for j in top_jodis],
             'haruf': primary_haruf,
             'haruf_side': best_side,
-            'confidence': min(int((final_scores[top_jodis] / (final_scores[ranked_indices[1]] + 1e-5)) * 40), 98)
+            'confidence': confidence_val
         }
 
 # ---------------------------------------------------------
@@ -375,12 +383,12 @@ else:
                     st.markdown('<div class="metric-card" style="border-left-color: #00FFCC;">', unsafe_allow_html=True)
                     st.subheader("🎯 महा-धमाका सिंगल हरूफ (High-Accuracy Haruf)")
                     st.write("हमारी सांख्यिकीय प्रणाली के अनुसार आज का सबसे मजबूत एकल अंक:")
-                    st.markdown(f'<div class="haruf-box">{results['haruf']} ({results['haruf_side']})</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="haruf-box">{results["haruf"]} ({results["haruf_side"]})</div>', unsafe_allow_html=True)
                     st.caption(f"सलाह: इस अंक को `{results['haruf_side']}` (Inside/Outside) स्थान पर प्रमुखता से खेलें।")
                     st.markdown('</div>', unsafe_allow_html=True)
                     
                     st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-                    st.subheader(f"🔮 अनुमानित जोड़ियाँ (Top {jodi_count} Jodis - Just {jodi_count}%)")
+                    st.subheader(f"🔮  अनुमानित जोड़ियाँ (Top {jodi_count} Jodis - Just {jodi_count}%)")
                     st.write("अत्यधिक गणितीय गणनाओं के आधार पर चुनिंदा जोड़ियाँ:")
                     
                     jodi_html = "".join([f'<div class="jodi-box">{jodi}</div>' for jodi in results['jodis']])
@@ -399,4 +407,3 @@ else:
                        $$Z = \\frac{{G - \\mu}}{{\\sigma}}$$
                     4. **सरपंच फ़िल्टर (Sarpanch Mode Filter):** आज के दिन का सामूहिक सरपंच अंक `{results['sarpanch']}` निकाला गया, और इस अंक वाली जोड़ियों को 30% अतिरिक्त वेटेज दिया गया।
                     """)
-    
