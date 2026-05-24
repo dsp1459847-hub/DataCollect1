@@ -3,20 +3,89 @@ import pandas as pd
 import numpy as np
 from collections import Counter
 
-st.set_page_config(page_title="Satta Sanchalan - AI Prediction Engine", layout="wide", page_icon="🎯")
+# ------------------------------
+# PAGE CONFIG
+# ------------------------------
+st.set_page_config(
+    page_title="Satta Sanchalan - AI Prediction Engine",
+    layout="wide",
+    page_icon="🎯"
+)
 
+# ------------------------------
+# CUSTOM STYLE
+# ------------------------------
 st.markdown("""
 <style>
-.main-title {font-size: 38px; color: #FFD700; text-align: center; font-weight: bold; margin-bottom: 5px;}
-.subtitle {font-size: 18px; color: #A0A0A0; text-align: center; margin-bottom: 25px;}
-.metric-card {background-color: #1E1E1E; padding: 15px; border-radius: 10px; border-left: 5px solid #FFD700; margin: 10px 0px;}
-.jodi-box {display: inline-block; background-color: #FFD700; color: #111111; font-size: 24px; font-weight: bold; padding: 10px 20px; margin: 5px; border-radius: 5px; text-align: center;}
-.haruf-box {display: inline-block; background-color: #00FFCC; color: #111111; font-size: 26px; font-weight: bold; padding: 10px 30px; border-radius: 5px; text-align: center;}
+.main-title {
+    font-size: 38px;
+    color: #FFD700;
+    text-align: center;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+.subtitle {
+    font-size: 18px;
+    color: #A0A0A0;
+    text-align: center;
+    margin-bottom: 25px;
+}
+.metric-card {
+    background-color: #1E1E1E;
+    padding: 15px;
+    border-radius: 10px;
+    border-left: 5px solid #FFD700;
+    margin: 10px 0px;
+}
+.jodi-box {
+    display: inline-block;
+    background-color: #FFD700;
+    color: #111111;
+    font-size: 24px;
+    font-weight: bold;
+    padding: 10px 20px;
+    margin: 5px;
+    border-radius: 5px;
+    text-align: center;
+}
+.haruf-box {
+    display: inline-block;
+    background-color: #00FFCC;
+    color: #111111;
+    font-size: 26px;
+    font-weight: bold;
+    padding: 10px 30px;
+    border-radius: 5px;
+    text-align: center;
+}
 </style>
 """, unsafe_allow_html=True)
 
+# ------------------------------
+# CONSTANTS
+# ------------------------------
 CHANNELS = ["DS", "FD", "GD", "GL", "DB", "SG", "ZA"]
 RASHI_MAP = {i: (i + 5) % 10 for i in range(10)}
+
+# ------------------------------
+# HELPERS
+# ------------------------------
+def clean_jodi_series(series):
+    s = series.astype(str).str.strip()
+    s = s.replace({
+        "": np.nan,
+        "nan": np.nan,
+        "NaN": np.nan,
+        "None": np.nan,
+        "XX": np.nan,
+        "X": np.nan,
+        "N/A": np.nan,
+        "NA": np.nan
+    })
+    s = s.str.replace(r"[^d]", "", regex=True)
+    s = s.str.zfill(2)
+    s = s.where(s.str.len() == 2)
+    return pd.to_numeric(s, errors="coerce")
 
 def get_rashi_family(number):
     if pd.isna(number):
@@ -24,7 +93,14 @@ def get_rashi_family(number):
     val = int(number)
     t, u = val // 10, val % 10
     rt, ru = RASHI_MAP[t], RASHI_MAP[u]
-    base_family = [10 * t + u, 10 * t + ru, 10 * rt + u, 10 * rt + ru]
+
+    base_family = [
+        10 * t + u,
+        10 * t + ru,
+        10 * rt + u,
+        10 * rt + ru
+    ]
+
     expanded = set()
     for num in base_family:
         expanded.add(num)
@@ -36,6 +112,9 @@ def get_mode(lst):
         return None
     return Counter(lst).most_common(1)[0][0]
 
+# ------------------------------
+# DEFAULT DATA
+# ------------------------------
 @st.cache_data
 def get_default_data():
     np.random.seed(42)
@@ -52,6 +131,9 @@ def get_default_data():
     }
     return pd.DataFrame(data)
 
+# ------------------------------
+# ENGINE
+# ------------------------------
 class SattaPredictiveEngine:
     def __init__(self, df):
         self.df = df.copy()
@@ -60,38 +142,35 @@ class SattaPredictiveEngine:
     def clean_data(self):
         self.df["DATE"] = pd.to_datetime(self.df["DATE"], errors="coerce")
         self.df = self.df.dropna(subset=["DATE"]).sort_values("DATE").reset_index(drop=True)
+
         for col in CHANNELS:
             if col in self.df.columns:
-                self.df[col] = (
-                    self.df[col]
-                    .astype(str)
-                    .str.replace(r"[^d]", "", regex=True)
-                    .replace("", np.nan)
-                )
-                self.df[col] = pd.to_numeric(self.df[col], errors="coerce")
+                self.df[col] = clean_jodi_series(self.df[col])
 
     def run_prediction(self, target_date, shift, top_n_jodis):
-        hist_df = self.df[self.df["DATE"] <= pd.to_datetime(target_date)].sort_values("DATE")
+        hist_df = self.df[self.df["DATE"] <= pd.to_datetime(target_date)].copy()
         if hist_df.empty or shift not in hist_df.columns:
             return None
 
         series = hist_df[shift].dropna().astype(int).values
         valid_count = len(series)
+
         if valid_count < 3:
-            st.warning(f"⚠️ {shift} channel mein data bahut kam hai. कम से कम 3 valid records chahiye.")
+            st.warning(f"⚠️ {shift} channel mein valid records bahut kam hain: {valid_count}. कम से कम 3 chahiye.")
             return None
 
         last_val = int(series[-1])
 
+        # Sarpanch
         sarpanch_history = []
         for _, row in hist_df.iterrows():
-            day_digits = []
+            digits = []
             for col in CHANNELS:
                 if col in row.index and not pd.isna(row[col]):
                     v = int(row[col])
-                    day_digits.append(v // 10)
-                    day_digits.append(v % 10)
-            mode = get_mode(day_digits)
+                    digits.append(v // 10)
+                    digits.append(v % 10)
+            mode = get_mode(digits)
             if mode is not None:
                 sarpanch_history.append(mode)
 
@@ -106,13 +185,18 @@ class SattaPredictiveEngine:
             trans /= trans.sum(axis=1, keepdims=True)
             predicted_sarpanch = int(np.argmax(trans[int(sarpanch_history[-1])]))
 
+        # Markov
         transition_matrix = np.zeros((100, 100))
         for i in range(1, len(series)):
-            transition_matrix[int(series[i - 1]), int(series[i])] += 1
+            prev = int(series[i - 1])
+            curr = int(series[i])
+            if 0 <= prev < 100 and 0 <= curr < 100:
+                transition_matrix[prev, curr] += 1
         transition_matrix += 0.1
         transition_matrix /= transition_matrix.sum(axis=1, keepdims=True)
         markov_scores = transition_matrix[last_val]
 
+        # Rashi
         rashi_scores = np.zeros(100)
         family_members = get_rashi_family(last_val)
         in_family_count = 0
@@ -126,9 +210,11 @@ class SattaPredictiveEngine:
             if 0 <= member < 100:
                 rashi_scores[member] = rashi_ratio
 
+        # Gap
         gap_scores = np.zeros(100)
         last_seen = {}
         all_gaps = {i: [] for i in range(100)}
+
         for idx, val in enumerate(series):
             val = int(val)
             if val in last_seen:
@@ -147,6 +233,7 @@ class SattaPredictiveEngine:
             else:
                 gap_scores[num] = 0.1
 
+        # Ensemble
         final_scores = np.zeros(100)
         for num in range(100):
             final_scores[num] = 0.5 * markov_scores[num] + 0.3 * rashi_scores[num] + 0.2 * gap_scores[num]
@@ -157,6 +244,7 @@ class SattaPredictiveEngine:
         ranked = np.argsort(final_scores)[::-1]
         top_jodis = ranked[:top_n_jodis]
 
+        # Haruf
         haruf_candidates = []
         for num in ranked[:15]:
             haruf_candidates.append((num // 10, "Andar"))
@@ -171,6 +259,7 @@ class SattaPredictiveEngine:
         primary_haruf = max(digit_weights, key=digit_weights.get)
         best_side = Counter(digit_sides[primary_haruf]).most_common(1)[0][0]
         second_best = final_scores[ranked[1]] if len(ranked) > 1 else 1.0
+
         confidence = min(int((final_scores[top_jodis[0]] / (second_best + 1e-5)) * 40), 98)
         confidence = int(confidence * min(valid_count / 10, 1.0))
 
@@ -183,9 +272,12 @@ class SattaPredictiveEngine:
             "haruf": primary_haruf,
             "haruf_side": best_side,
             "confidence": confidence,
-            "valid_count": valid_count,
+            "valid_count": valid_count
         }
 
+# ------------------------------
+# UI
+# ------------------------------
 st.markdown('<div class="main-title">🎯 Satta Sanchalan (AI Prediction Engine)</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">राशि मैपिंग, सरपंच सर्वसम्मति और अंतराल गतिशीलता आधारित स्वचालित पूर्वानुमान प्रणाली</div>', unsafe_allow_html=True)
 
@@ -195,9 +287,9 @@ uploaded_file = st.sidebar.file_uploader("अपनी Excel / CSV फ़ाइ�
 if uploaded_file is not None:
     try:
         if uploaded_file.name.endswith(".csv"):
-            raw_df = pd.read_csv(uploaded_file)
+            raw_df = pd.read_csv(uploaded_file, dtype=str, keep_default_na=False)
         else:
-            raw_df = pd.read_excel(uploaded_file)
+            raw_df = pd.read_excel(uploaded_file, dtype=str, keep_default_na=False)
         st.sidebar.success("🎉 फ़ाइल सफलतापूर्वक लोड हो गई!")
     except Exception as e:
         st.sidebar.error(f"Error: {e}")
@@ -213,10 +305,12 @@ if "DATE" not in raw_df.columns:
 else:
     raw_df["DATE"] = pd.to_datetime(raw_df["DATE"], errors="coerce")
     raw_df = raw_df.dropna(subset=["DATE"]).sort_values("DATE").reset_index(drop=True)
+
     engine = SattaPredictiveEngine(raw_df)
 
     st.sidebar.header("⚙️ एल्गोरिदम सेटिंग्स")
     available_shifts = [c for c in CHANNELS if c in raw_df.columns]
+
     if not available_shifts:
         st.error("❌ कोई valid channel column नहीं मिला. कृपया DS/FD/GD/GL/DB/SG/ZA में से कम से कम एक column रखें.")
         st.stop()
@@ -224,6 +318,7 @@ else:
     selected_shift = st.sidebar.selectbox("🎯 शिफ्ट (Shift/Channel) चुनें:", available_shifts)
     all_dates = raw_df["DATE"].dt.strftime("%Y-%m-%d").tolist()
     selected_date = st.sidebar.selectbox("📅 दिनांक (Target Date) चुनें:", all_dates, index=len(all_dates) - 1)
+
     jodi_count = st.sidebar.slider("🔢 जोड़ियों की संख्या (Top Jodis):", min_value=5, max_value=10, value=6)
 
     valid_count = int(raw_df.loc[raw_df["DATE"] <= pd.to_datetime(selected_date), selected_shift].dropna().shape[0])
@@ -232,6 +327,7 @@ else:
     if st.button("🚀 अगले दिन की भविष्यवाणी (Prediction) शुरू करें"):
         with st.spinner("ऐतिहासिक डेटा पैटर्न्स और राशि चक्रों का विश्लेषण किया जा रहा है..."):
             results = engine.run_prediction(selected_date, selected_shift, jodi_count)
+
             if results:
                 col1, col2 = st.columns([1, 1])
 
@@ -264,7 +360,7 @@ else:
                     st.markdown('<div class="metric-card">', unsafe_allow_html=True)
                     st.subheader(f"🔮 अनुमानित जोड़ियाँ (Top {jodi_count} Jodis)")
                     st.write("अत्यधिक गणितीय गणनाओं के आधार पर चुनिंदा जोड़ियाँ:")
-                    jodi_html = ''.join([f'<div class="jodi-box">{j}</div>' for j in results['jodis']])
+                    jodi_html = "".join([f'<div class="jodi-box">{j}</div>' for j in results["jodis"]])
                     st.markdown(jodi_html, unsafe_allow_html=True)
                     st.markdown('</div>', unsafe_allow_html=True)
 
