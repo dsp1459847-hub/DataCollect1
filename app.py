@@ -1,22 +1,21 @@
 import streamlit as st
 import pandas as pd
 from collections import Counter
-from itertools import combinations
 from datetime import datetime
 
 st.set_page_config(page_title="Jackpot Pattern AI", layout="wide")
 st.title("🏆 Monthly & Weekly Jackpot Pattern Analyzer")
 
 SHIFT_ORDER = ['DS', 'DB', 'SG', 'FD', 'GD', 'GL']
-EXPECTED_SHIFTS = ['DS', 'FD', 'GD', 'GL', 'DB', 'SG']
 MASTER_PATTERNS = [0, -18, -16, -26, -32, -1, -4, -11, -15, -10, -51, -50, 15, 5, -5, -55, 1, 10, 11, 51, 55, -40]
+CANDIDATE_WINDOWS = [30, 60, 90, 100, 180, 500]
 
 if "history_df" not in st.session_state:
     st.session_state["history_df"] = pd.DataFrame()
+if "last_key" not in st.session_state:
+    st.session_state["last_key"] = None
 if "last_prediction" not in st.session_state:
-    st.session_state["last_prediction"] = None
-if "status_msg" not in st.session_state:
-    st.session_state["status_msg"] = ""
+    st.session_state["last_prediction"] = []
 
 def load_file(file):
     if file.name.endswith(".csv"):
@@ -32,7 +31,7 @@ def detect_date_col(df):
             return c
     return None
 
-def standardize_df(df):
+def normalize_df(df):
     date_col = detect_date_col(df)
     if date_col:
         df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
@@ -41,220 +40,211 @@ def standardize_df(df):
         df = df.reset_index(drop=True)
     return df, date_col
 
-def merge_history(existing, new_df, date_col):
-    if existing is None or existing.empty:
+def merge_history(base, new_df):
+    if base is None or base.empty:
         merged = new_df.copy()
     else:
-        merged = pd.concat([existing, new_df], ignore_index=True)
-    if date_col and date_col in merged.columns:
+        merged = pd.concat([base, new_df], ignore_index=True)
+    merged.columns = merged.columns.astype(str).str.strip().str.upper()
+    date_col = detect_date_col(merged)
+    if date_col:
         merged[date_col] = pd.to_datetime(merged[date_col], errors="coerce")
-        merged = merged.sort_values(date_col).drop_duplicates().reset_index(drop=True)
+        merged = merged.sort_values(date_col)
+        merged = merged.drop_duplicates(subset=[date_col] + [c for c in merged.columns if c != date_col], keep="last")
     else:
-        merged = merged.drop_duplicates().reset_index(drop=True)
-    return merged
+        merged = merged.drop_duplicates(keep="last")
+    return merged.reset_index(drop=True)
 
-def ordered_shifts(df_cols):
-    valid = [c for c in SHIFT_ORDER if c in df_cols]
-    return valid
+def available_shifts(df):
+    return [c for c in SHIFT_ORDER if c in df.columns]
 
-def active_shifts(df, mode):
-    valid = ordered_shifts(df.columns)
+def get_shifts(df, mode):
+    shifts = available_shifts(df)
     if mode == "All Shifts":
-        return valid
-    return [mode] if mode in valid else valid[:1]
+        return shifts
+    return [mode] if mode in shifts else shifts[:1]
 
-def auto_window_size(n):
-    if n < 20:
-        return 10
-    if n < 60:
-        return 30
-    if n < 120:
-        return 90
-    if n < 250:
-        return 100
-    if n < 600:
-        return 180
-    return 500
-
-def row_numbers(df, idx, shifts):
-    return [int(x) % 100 for x in df.iloc[idx][shifts].dropna().tolist()]
-
-def build_shift_history(df, shifts):
-    hist = []
-    for i in range(len(df) - 1):
-        curr = set(row_numbers(df, i, shifts))
-        nxt = set(row_numbers(df, i + 1, shifts))
-        if not curr or not nxt:
-            hist.append([])
-            continue
-        hits = []
-        for v in curr:
-            for p in MASTER_PATTERNS:
-                cand = (v + p) % 100
-                if cand in nxt:
-                    hits.append(cand)
-        hist.append(sorted(list(set(hits))))
-    return hist
-
-def rank_numbers(df, shifts, window):
-    sub = df.tail(window).copy()
-    history = build_shift_history(sub, shifts)
-    flat = [x for sublist in history for x in sublist]
-    freq = Counter(flat)
-
-    seq = Counter()
-    for i in range(len(history) - 1):
-        a, b = history[i], history[i + 1]
-        if a and b:
-            for x in a:
-                for y in b:
-                    seq[(x, y)] += 1
-
-    latest = history[-1] if history else []
-    ordered = []
-    for x in latest:
-        for (prev, nxt), c in seq.most_common():
-            if prev == x:
-                ordered.append(nxt)
-    if not ordered:
-        ordered = [n for n, c in freq.most_common(20)]
-
-    ordered = [n % 100 for n in ordered]
-    ordered = list(dict.fromkeys(ordered))
-    return ordered, freq
-
-def diversify(base_numbers, shift_name):
-    if not base_numbers:
-        return []
-    seed = sum(ord(c) for c in shift_name) % 9 + 1
+def row_values(df, idx, shifts):
+    vals = df.iloc[idx][shifts].dropna().tolist()
     out = []
-    used = set()
-    for n in base_numbers:
-        cand = (n + seed * 3) % 100
-        if cand not in used:
-            out.append(cand)
-            used.add(cand)
-    return out[:10]
+    for v in vals:
+        try:
+            out.append(int(float(v)) % 100)
+        except:
+            pass
+    return out
 
-def build_backtest(df, shifts):
-    rows = []
+def build_chain(df, shifts):
+    chain = []
     for i in range(len(df) - 1):
-        curr = set(row_numbers(df, i, shifts))
-        nxt = set(row_numbers(df, i + 1, shifts))
-        pred = []
-        for v in curr:
-            for p in MASTER_PATTERNS:
-                cand = (v + p) % 100
-                if cand in nxt:
-                    pred.append(cand)
-        pred = sorted(list(set(pred)))
+        curr = set(row_values(df, i, shifts))
+        nxt = set(row_values(df, i + 1, shifts))
+        if curr and nxt:
+            hits = []
+            for v in curr:
+                for p in MASTER_PATTERNS:
+                    cand = (v + p) % 100
+                    if cand in nxt:
+                        hits.append(cand)
+            chain.append(sorted(set(hits)))
+        else:
+            chain.append([])
+    return chain
+
+def score_frequency(chain):
+    flat = [x for row in chain for x in row]
+    return Counter(flat)
+
+def evaluate_window(df, shifts, window):
+    sub = df.tail(min(window, len(df))).copy()
+    if len(sub) < 2:
+        return 0
+    chain = build_chain(sub, shifts)
+    freq = score_frequency(chain)
+    if not chain:
+        return 0
+    recent = chain[-1] if chain[-1] else []
+    score = len(recent) * 10
+    score += sum(c for n, c in freq.most_common(5))
+    score += len(freq)
+    return score
+
+def best_window_picker(df, shifts, candidates=CANDIDATE_WINDOWS):
+    best_w = candidates[0]
+    best_score = -1
+    details = []
+    for w in candidates:
+        s = evaluate_window(df, shifts, w)
+        details.append((w, s))
+        if s > best_score:
+            best_score = s
+            best_w = w
+    return best_w, details
+
+def predict_for_shift(df, shift, window):
+    if shift not in df.columns or len(df) < 2:
+        return []
+    sub = df.tail(min(window, len(df))).copy()
+    chain = build_chain(sub, [shift])
+    freq = score_frequency(chain)
+    latest = chain[-1] if chain else []
+    result = []
+    for x in latest:
+        result.append(x)
+    for n, c in freq.most_common(20):
+        result.append(n)
+    result = [int(x) % 100 for x in result if 0 <= int(x) < 100]
+    return list(dict.fromkeys(result[:10]))
+
+def predict_all(df, shifts, window):
+    out = {}
+    for s in shifts:
+        out[s] = predict_for_shift(df, s, window)
+    return out
+
+def build_backtest(df, shifts, window):
+    sub = df.tail(min(window, len(df))).copy()
+    rows = []
+    for s in shifts:
+        chain = build_chain(sub, [s])
+        freq = score_frequency(chain)
         rows.append({
-            "Day": i,
-            "Current": sorted(list(curr)),
-            "Next": sorted(list(nxt)),
-            "Predicted": pred,
-            "Hit": "✅" if pred else "❌"
+            "Shift": s,
+            "Top 5 Frequencies": freq.most_common(5),
+            "Latest Hits": chain[-1] if chain else [],
         })
     return pd.DataFrame(rows)
 
-uploaded_file = st.sidebar.file_uploader("Data File Upload Karein", type=["csv", "xlsx"])
-new_history_file = st.sidebar.file_uploader("Append New History File", type=["csv", "xlsx"])
+uploaded_file = st.sidebar.file_uploader("Base Data File Upload Karein", type=["csv", "xlsx"])
+append_file = st.sidebar.file_uploader("Append History File", type=["csv", "xlsx"])
 
 if st.sidebar.button("Update History"):
-    if new_history_file is None:
-        st.warning("Append करने के लिए new history file upload करो.")
+    if append_file is None:
+        st.warning("Append करने के लिए file upload करो.")
     else:
-        new_df = load_file(new_history_file)
-        new_df, new_date_col = standardize_df(new_df)
+        new_df = load_file(append_file)
+        new_df, _ = normalize_df(new_df)
+        st.session_state["history_df"] = merge_history(st.session_state["history_df"], new_df)
+        st.session_state["last_prediction"] = []
+        st.session_state["last_key"] = None
+        st.success("History updated.")
 
-        if st.session_state["history_df"].empty:
-            st.session_state["history_df"] = new_df.copy()
-        else:
-            existing = st.session_state["history_df"].copy()
-            if "DATE" in existing.columns and "DATE" not in new_df.columns and new_date_col:
-                new_df = new_df.rename(columns={new_date_col: "DATE"})
-            st.session_state["history_df"] = merge_history(existing, new_df, "DATE" if "DATE" in new_df.columns or "DATE" in existing.columns else new_date_col)
-
-        st.session_state["status_msg"] = "History updated successfully."
-
-if uploaded_file and st.session_state["history_df"].empty:
+if st.session_state["history_df"].empty and uploaded_file is not None:
     base_df = load_file(uploaded_file)
-    base_df, base_date_col = standardize_df(base_df)
+    base_df, _ = normalize_df(base_df)
     st.session_state["history_df"] = base_df.copy()
 
 df = st.session_state["history_df"]
 
-if st.session_state["status_msg"]:
-    st.success(st.session_state["status_msg"])
+if df.empty:
+    st.info("Sidebar में data file upload करो.")
+    st.stop()
 
-if not df.empty:
-    date_col = detect_date_col(df)
-    if date_col:
-        df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-        df = df.sort_values(date_col).reset_index(drop=True)
-    else:
-        df = df.reset_index(drop=True)
+df, date_col = normalize_df(df)
+shifts = available_shifts(df)
+if not shifts:
+    st.error("No valid shift columns found.")
+    st.stop()
 
-    avail = ordered_shifts(df.columns)
-    if len(avail) < 1:
-        st.error("Shift columns नहीं मिले.")
-        st.stop()
+for c in shifts:
+    df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    for col in avail:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+st.sidebar.header("Controls")
+mode = st.sidebar.selectbox("Select Shift", ["All Shifts"] + shifts, index=0)
+selected_shift = mode
 
-    st.sidebar.header("Controls")
-    mode = st.sidebar.selectbox("Select Shift", ["All Shifts"] + avail, index=0)
-    shifts = active_shifts(df, mode)
-
-    pred_window = auto_window_size(len(df))
-    st.sidebar.info(f"Auto Prediction Window: {pred_window}")
-
-    if date_col:
-        date_options = [d.date() for d in df[date_col].dropna().tolist()]
-        selected_date = st.sidebar.date_input("Select Date", value=date_options[-1] if date_options else datetime.today().date()) if date_options else None
-    else:
-        selected_date = None
-
-    st.header("📊 Summary")
-    pred_nums, freq_map = rank_numbers(df, shifts, pred_window)
-
-    c1, c2, c3 = st.columns(3)
-    top = freq_map.most_common(3)
-    if len(top) > 0:
-        c1.metric("Top", str(top[0][0]), f"{top[0][1]} hits")
-    if len(top) > 1:
-        c2.metric("Second", str(top[1][0]), f"{top[1][1]} hits")
-    if len(top) > 2:
-        c3.metric("Third", str(top[2][0]), f"{top[2][1]} hits")
-
-    base_pred = pred_nums[:10]
-    shift_preds = {s: diversify(base_pred, s) for s in shifts}
-
-    st.subheader("🔢 Prediction Numbers")
-    if mode == "All Shifts":
-        st.success(f"All Shifts Prediction: {base_pred}")
-        st.write(shift_preds)
-    else:
-        st.success(f"{mode} Prediction: {shift_preds.get(mode, base_pred)}")
-
-    st.divider()
-    st.header("✅ Backtest")
-    bt = build_backtest(df.tail(min(30, len(df))), shifts)
-    if not bt.empty:
-        st.dataframe(bt, use_container_width=True)
-        hit_rate = round((bt["Hit"].eq("✅").mean() * 100), 2)
-        st.success(f"Backtest Accuracy: {hit_rate}%")
-
-    st.divider()
-    st.header("📅 Selected Date")
-    if date_col and selected_date:
-        idxs = df.index[df[date_col].dt.date == selected_date].tolist()
-        if idxs:
-            idx = idxs[0]
-            vals = row_numbers(df, idx, shifts)
-            st.write(f"**[DATE]** {selected_date}")
-            st.write(f"**[SHIFTS]** {shifts}")
-            st.write(f"**[VALUES]** {vals}")
+if date_col:
+    dates = sorted([d.date() for d in df[date_col].dropna().tolist()])
+    selected_date = st.sidebar.date_input("Select Date", value=dates[-1], min_value=dates[0], max_value=dates[-1]) if dates else None
 else:
-    st.info("Sidebar में अपनी data file upload करो.")
+    selected_date = None
+
+manual_window = st.sidebar.checkbox("Manual Window", value=False)
+if manual_window:
+    pred_window = st.sidebar.select_slider("Prediction Window", options=CANDIDATE_WINDOWS, value=90)
+else:
+    pred_window, win_details = best_window_picker(df, shifts)
+    st.sidebar.info(f"Auto Best Window: {pred_window}")
+    st.sidebar.write({w: s for w, s in win_details})
+
+key = (selected_shift, str(selected_date), len(df), pred_window)
+if st.session_state["last_key"] != key:
+    st.session_state["last_key"] = key
+    st.session_state["last_prediction"] = []
+
+if selected_date and date_col:
+    filtered_df = df[df[date_col].dt.date <= selected_date].copy()
+else:
+    filtered_df = df.copy()
+filtered_df = filtered_df.reset_index(drop=True)
+
+st.header("📊 Pattern Summary")
+
+if selected_shift == "All Shifts":
+    pred_map = predict_all(filtered_df, shifts, pred_window)
+    combined = []
+    for s in shifts:
+        combined.extend(pred_map[s])
+    combined = list(dict.fromkeys([n for n in combined if 0 <= n < 100]))
+    st.success(f"All Shifts Prediction: {combined[:10]}")
+    st.write(pred_map)
+    st.session_state["last_prediction"] = combined[:10]
+else:
+    pred_nums = predict_for_shift(filtered_df, selected_shift, pred_window)
+    st.success(f"{selected_shift} Prediction: {pred_nums}")
+    st.session_state["last_prediction"] = pred_nums
+
+st.divider()
+st.header("✅ Backtest")
+bt = build_backtest(filtered_df, shifts, min(30, len(filtered_df)))
+if not bt.empty:
+    st.dataframe(bt, use_container_width=True)
+
+st.divider()
+st.header("📅 Selected Date View")
+if date_col and selected_date:
+    idxs = df.index[df[date_col].dt.date == selected_date].tolist()
+    if idxs:
+        i = idxs[0]
+        st.write(f"**[DATE]** {selected_date}")
+        st.write(f"**[ROW]** {row_values(df, i, shifts)}")
