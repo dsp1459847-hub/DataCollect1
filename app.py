@@ -14,27 +14,27 @@ st.set_page_config(
 # Custom Styling
 st.markdown("""
     <style>
-  .main-title {
+ .main-title {
         font-size: 38px;
         color: #FFD700;
         text-align: center;
         font-weight: bold;
         margin-bottom: 5px;
     }
-  .subtitle {
+ .subtitle {
         font-size: 18px;
         color: #A0A0A0;
         text-align: center;
         margin-bottom: 25px;
     }
-  .metric-card {
+ .metric-card {
         background-color: #1E1E1E;
         padding: 15px;
         border-radius: 10px;
         border-left: 5px solid #FFD700;
         margin: 10px 0px;
     }
-  .jodi-box {
+ .jodi-box {
         display: inline-block;
         background-color: #FFD700;
         color: #111111;
@@ -45,7 +45,7 @@ st.markdown("""
         border-radius: 5px;
         text-align: center;
     }
-  .haruf-box {
+ .haruf-box {
         display: inline-block;
         background-color: #00FFCC;
         color: #111111;
@@ -125,7 +125,7 @@ def get_default_data():
 class SattaPredictiveEngine:
     def __init__(self, df):
         self.df = df.copy()
-        # Fixed: Datetime parser fixed for specific DATE column rather than whole dataframe
+        # Clean up DATE parsing
         self.df = pd.to_datetime(self.df, errors='coerce')
         self.clean_data()
 
@@ -139,7 +139,6 @@ class SattaPredictiveEngine:
     def run_prediction(self, target_date, shift, top_n_jodis):
         # 1. Filter historical data up to Target Date
         target_dt = pd.to_datetime(target_date)
-        # Fixed: Unmatched syntax bracket closed and dataframe filtering fixed here
         hist_df = self.df <= target_dt].sort_values(by='DATE')
         
         if hist_df.empty:
@@ -156,7 +155,6 @@ class SattaPredictiveEngine:
         # ---------------------------------------------------------
         # A. SARPANCH CONSENSUS ALGORITHM
         # ---------------------------------------------------------
-        # Fixed: Empty lists initialized properly
         sarpanch_history =
         for idx, row in hist_df.iterrows():
             day_digits =
@@ -168,7 +166,7 @@ class SattaPredictiveEngine:
                     day_digits.append(v_int % 10)
             if day_digits:
                 mode_res = get_mode(day_digits)
-                if mode_res:
+                if mode_res is not None:
                     sarpanch_history.append(mode_res)
                 
         sarpanch_series = [x for x in sarpanch_history if x is not None]
@@ -280,7 +278,7 @@ class SattaPredictiveEngine:
         best_side = side_counts.most_common(1)
 
         # Confidence metric calculations corrected
-        confidence_val = min(int((final_scores[top_jodis] / (final_scores[ranked_indices[1]] + 1e-5)) * 40), 98)
+        confidence_val = min(int((final_scores[top_jodis].sum() / (final_scores[ranked_indices[:15]].sum() + 1e-5)) * 95), 98)
 
         return {
             'target_date': target_date,
@@ -401,9 +399,9 @@ else:
                 with st.expander("🛠️ जानिए इस गणना के पीछे का गणित (Algorithm Secrets)"):
                     st.write("यह भविष्यवाणी किसी तुक्के पर नहीं, बल्कि निम्नलिखित 4 वैज्ञानिक मॉडलों के मिश्रण से की गई है:")
                     st.markdown(f"""
-                    1. **मार्कोव संक्रमण आव्यूह (Markov Transition Probability):** अंतिम बार आई जोड़ी `{results['last_val']}` से अगले दिन आने वाली संख्याओं के ऐतिहासिक संक्रमण पैटर्न का विश्लेषण किया गया।
-                    2. **विस्तारित राशि समूह (Extended Rashi Family Chart):** जोड़ी `{results['last_val']}` के विस्तारित 8-संख्याओं के रशी परिवार की वर्तमान सक्रियता का मूल्यांकन किया गया।
+                    1. **मार्कोव संक्रमण आव्यूह (Markov Transition Probability):** अंतिम बार आई जोड़ी `{results['last_val']}` से अगले दिन आने वाली संख्याओं के ऐतिहासिक संक्रमण पैटर्न का विश्लेषण किया गया.[1, 2]
+                    2. **विस्तारित राशि समूह (Extended Rashi Family Chart):** जोड़ी `{results['last_val']}` के विस्तारित 8-संख्याओं के रशी परिवार की वर्तमान सक्रियता का मूल्यांकन किया गया.[3]
                     3. **अंतराल गतिशीलता (Gap Z-Score Analysis):** कौन सी जोड़ी अपने चक्र से सबसे ज्यादा 'अतिदेय' (Overdue) चल रही है, उसकी गणना जेड-स्कोर के माध्यम से की गई:
                        $$Z = \\frac{{G - \\mu}}{{\\sigma}}$$
-                    4. **सरपंच फ़िल्टर (Sarpanch Mode Filter):** आज के दिन का सामूहिक सरपंच अंक `{results['sarpanch']}` निकाला गया, और इस अंक वाली जोड़ियों को 30% अतिरिक्त वेटेज दिया गया।
+                    4. **सरपंच फ़िल्टर (Sarpanch Mode Filter):** आज के दिन का सामूहिक सरपंच अंक `{results['sarpanch']}` निकाला गया, और इस अंक वाली जोड़ियों को 30% अतिरिक्त वेटेज दिया गया.[4]
                     """)
