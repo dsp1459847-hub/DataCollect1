@@ -3,16 +3,59 @@ import pandas as pd
 import numpy as np
 from collections import Counter
 
-st.set_page_config(page_title="Satta Sanchalan - AI Prediction Engine", layout="wide", page_icon="🎯")
+st.set_page_config(
+    page_title="Satta Sanchalan - AI Prediction Engine",
+    layout="wide",
+    page_icon="🎯"
+)
 
 st.markdown("""
 <style>
-.main-title {font-size: 38px; color: #FFD700; text-align: center; font-weight: bold; margin-bottom: 5px;}
-.subtitle {font-size: 18px; color: #A0A0A0; text-align: center; margin-bottom: 25px;}
-.metric-card {background-color: #1E1E1E; padding: 15px; border-radius: 10px; border-left: 5px solid #FFD700; margin: 10px 0px;}
-.jodi-box {display: inline-block; background-color: #FFD700; color: #111111; font-size: 24px; font-weight: bold; padding: 10px 20px; margin: 5px; border-radius: 5px; text-align: center;}
-.haruf-box {display: inline-block; background-color: #00FFCC; color: #111111; font-size: 26px; font-weight: bold; padding: 10px 30px; border-radius: 5px; text-align: center;}
-.small-note {color:#A0A0A0; font-size: 14px;}
+.main-title {
+    font-size: 38px;
+    color: #FFD700;
+    text-align: center;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+.subtitle {
+    font-size: 18px;
+    color: #A0A0A0;
+    text-align: center;
+    margin-bottom: 25px;
+}
+.metric-card {
+    background-color: #1E1E1E;
+    padding: 15px;
+    border-radius: 10px;
+    border-left: 5px solid #FFD700;
+    margin: 10px 0px;
+}
+.jodi-box {
+    display: inline-block;
+    background-color: #FFD700;
+    color: #111111;
+    font-size: 24px;
+    font-weight: bold;
+    padding: 10px 20px;
+    margin: 5px;
+    border-radius: 5px;
+    text-align: center;
+}
+.haruf-box {
+    display: inline-block;
+    background-color: #00FFCC;
+    color: #111111;
+    font-size: 26px;
+    font-weight: bold;
+    padding: 10px 30px;
+    border-radius: 5px;
+    text-align: center;
+}
+.small-note {
+    color: #A0A0A0;
+    font-size: 13px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -22,8 +65,14 @@ RASHI_MAP = {i: (i + 5) % 10 for i in range(10)}
 def clean_jodi_series(series):
     s = series.astype(str).str.strip()
     s = s.replace({
-        "": np.nan, "nan": np.nan, "NaN": np.nan, "None": np.nan,
-        "XX": np.nan, "X": np.nan, "N/A": np.nan, "NA": np.nan
+        "": np.nan,
+        "nan": np.nan,
+        "NaN": np.nan,
+        "None": np.nan,
+        "XX": np.nan,
+        "X": np.nan,
+        "N/A": np.nan,
+        "NA": np.nan
     })
     s = s.str.replace(r"[^d]", "", regex=True)
     s = s.str.zfill(2)
@@ -36,7 +85,12 @@ def get_rashi_family(number):
     val = int(number)
     t, u = val // 10, val % 10
     rt, ru = RASHI_MAP[t], RASHI_MAP[u]
-    base_family = [10 * t + u, 10 * t + ru, 10 * rt + u, 10 * rt + ru]
+    base_family = [
+        10 * t + u,
+        10 * t + ru,
+        10 * rt + u,
+        10 * rt + ru
+    ]
     expanded = set()
     for num in base_family:
         expanded.add(num)
@@ -85,13 +139,19 @@ class SattaPredictiveEngine:
         hist_df = hist_df.tail(window_size).reset_index(drop=True)
         series = hist_df[shift].dropna().astype(int).values
         valid_count = len(series)
-        if valid_count < 3:
-            st.warning(f"⚠️ {shift} channel mein valid records bahut kam hain: {valid_count}.")
+        if valid_count < 5:
+            st.warning(f"⚠️ {shift} channel में valid records बहुत कम हैं: {valid_count}.")
             return None
 
         last_val = int(series[-1])
-        weights = np.linspace(0.6, 1.4, num=len(series)) if len(series) > 1 else np.array([1.0])
 
+        # Recency weights based on order inside the selected window
+        if len(series) > 1:
+            weights = np.linspace(0.7, 1.3, num=len(series))
+        else:
+            weights = np.array([1.0])
+
+        # Sarpanch analysis
         sarpanch_history = []
         for _, row in hist_df.iterrows():
             digits = []
@@ -114,21 +174,24 @@ class SattaPredictiveEngine:
             trans /= trans.sum(axis=1, keepdims=True)
             predicted_sarpanch = int(np.argmax(trans[int(sarpanch_history[-1])]))
 
+        # Markov
         transition_matrix = np.zeros((100, 100))
         for i in range(1, len(series)):
             prev = int(series[i - 1])
             curr = int(series[i])
-            w = weights[i]
             if 0 <= prev < 100 and 0 <= curr < 100:
-                transition_matrix[prev, curr] += w
-
+                transition_matrix[prev, curr] += weights[i]
         transition_matrix += 0.1
         row_sums = transition_matrix.sum(axis=1, keepdims=True)
-        transition_matrix = np.divide(transition_matrix, row_sums, out=np.zeros_like(transition_matrix), where=row_sums != 0)
+        transition_matrix = np.divide(
+            transition_matrix,
+            row_sums,
+            out=np.zeros_like(transition_matrix),
+            where=row_sums != 0
+        )
         markov_scores = transition_matrix[last_val]
 
-        day_factor = 1.0 + ((target_dt.day % 7) * 0.02)
-
+        # Rashi
         rashi_scores = np.zeros(100)
         family_members = get_rashi_family(last_val)
         in_family_count = 0
@@ -138,10 +201,12 @@ class SattaPredictiveEngine:
             if curr in get_rashi_family(prev):
                 in_family_count += 1
         rashi_ratio = in_family_count / max(len(series) - 1, 1)
+        day_factor = 1.0 + ((target_dt.day % 7) * 0.02)
         for member in family_members:
             if 0 <= member < 100:
                 rashi_scores[member] = rashi_ratio * day_factor
 
+        # Gap
         gap_scores = np.zeros(100)
         last_seen = {}
         all_gaps = {i: [] for i in range(100)}
@@ -163,14 +228,16 @@ class SattaPredictiveEngine:
             else:
                 gap_scores[num] = 0.1
 
+        # Final fixed scoring structure
         final_scores = np.zeros(100)
         for num in range(100):
-            recency_boost = 1.0 + (((target_dt.day + target_dt.month + num) % 5) * 0.01)
             final_scores[num] = (
                 0.52 * markov_scores[num] +
                 0.28 * rashi_scores[num] +
                 0.20 * gap_scores[num]
-            ) * recency_boost
+            )
+            recency_boost = 1.0 + (((target_dt.day + target_dt.month + num) % 5) * 0.01)
+            final_scores[num] *= recency_boost
             t, u = num // 10, num % 10
             if t == predicted_sarpanch or u == predicted_sarpanch:
                 final_scores[num] *= 1.18
@@ -178,6 +245,7 @@ class SattaPredictiveEngine:
         ranked = np.argsort(final_scores)[::-1]
         top_jodis = ranked[:top_n_jodis]
 
+        # Haruf
         haruf_candidates = []
         for num in ranked[:20]:
             haruf_candidates.append((num // 10, "Andar"))
@@ -191,8 +259,8 @@ class SattaPredictiveEngine:
 
         primary_haruf = max(digit_weights, key=digit_weights.get)
         best_side = Counter(digit_sides[primary_haruf]).most_common(1)[0][0]
-
         second_best = final_scores[ranked[1]] if len(ranked) > 1 else 1.0
+
         confidence = min(int((final_scores[top_jodis[0]] / (second_best + 1e-5)) * 42), 98)
         confidence = int(confidence * min(valid_count / 10, 1.0))
 
@@ -256,6 +324,7 @@ else:
     if st.button("🚀 अगले दिन की भविष्यवाणी (Prediction) शुरू करें"):
         with st.spinner("ऐतिहासिक डेटा पैटर्न्स और राशि चक्रों का विश्लेषण किया जा रहा है..."):
             results = engine.run_prediction(selected_date, selected_shift, jodi_count, window_size)
+
             if results:
                 col1, col2 = st.columns([1, 1])
 
@@ -290,5 +359,10 @@ else:
                     jodi_html = "".join([f'<div class="jodi-box">{j}</div>' for j in results["jodis"]])
                     st.markdown(jodi_html, unsafe_allow_html=True)
                     st.markdown('</div>', unsafe_allow_html=True)
+
+                with st.expander("🛠️ Analysis Details"):
+                    st.write("Model uses fixed-weight Markov, Rashi-family, and gap-based scoring.")
+                    st.write("Prediction changes with target date, shift, and rolling window input.")
+                    st.write("Accuracy formula stays fixed; only input slice changes.")
             else:
                 st.error("Prediction नहीं बन सकी. कृपया दूसरे shift या अधिक data वाले file के साथ try करें.")
